@@ -1,0 +1,235 @@
+/* App-wide styling */
+body {
+    background-color: #0f1116;
+    color: #ffffff;
+    font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+    margin: 20px;
+}
+:root {
+    --bg-color: #fff0f5; /* 浅粉背景 */
+    --sidebar-bg: #ffe4e1; /* 侧边栏深粉 */
+    --accent-color: #ff69b4; /* 强调色 */
+    --user-bubble: #ffb7c5; /* 用户气泡 */
+    --ai-bubble: #ffffff; /* AI 气泡 */
+    --text-color: #4a4a4a;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: "Segoe UI", sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    overflow: hidden; /* 桌面应用通常隐藏滚动条 */
+}
+
+.app-container {
+    display: flex;
+    height: 100vh;
+    width: 100vw;
+}
+
+/* 侧边栏 */
+.sidebar {
+    width: 64px;
+    background-color: var(--sidebar-bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 20px;
+    box-shadow: 2px 0 5px rgba(0, 0, 0, 0.05);
+}
+
+.nav-icon {
+    width: 40px;
+    height: 40px;
+    margin-bottom: 16px;
+    border-radius: 12px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 20px;
+    background: rgba(255, 255, 255, 0.4);
+}
+
+.nav-icon:hover,
+.nav-icon.active {
+    background-color: var(--accent-color);
+    color: white;
+    transform: scale(1.1);
+}
+
+/* 主内容区 */
+.content-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+}
+
+/* 聊天记录 */
+.chat-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.message {
+    max-width: 75%;
+    padding: 10px 16px;
+    border-radius: 12px;
+    font-size: 14px;
+    line-height: 1.5;
+    position: relative;
+}
+
+.msg-ai {
+    background: var(--ai-bubble);
+    align-self: flex-start;
+    border-bottom-left-radius: 2px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+}
+
+.msg-user {
+    background: var(--user-bubble);
+    align-self: flex-end;
+    border-bottom-right-radius: 2px;
+}
+
+/* 底部输入区 */
+.input-section {
+    padding: 15px;
+    background: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(10px);
+    display: flex;
+    gap: 10px;
+    border-top: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.input-section input {
+    flex: 1;
+    padding: 10px 15px;
+    border-radius: 20px;
+    border: 1px solid #ddd;
+    outline: none;
+}
+
+.btn-send {
+    background: var(--accent-color);
+    color: white;
+    border: none;
+    padding: 0 20px;
+    border-radius: 20px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+/* 拖拽覆盖层 */
+.drag-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 105, 180, 0.2);
+    backdrop-filter: blur(4px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 100;
+    font-size: 24px;
+    color: var(--accent-color);
+    font-weight: bold;
+    border: 3px dashed var(--accent-color);
+    margin: 10px;
+    border-radius: 12px;
+}
+
+/* 设置面板 */
+.settings-panel {
+    padding: 30px;
+}
+.settings-group {
+    margin-bottom: 20px;
+}
+.settings-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: bold;
+    font-size: 14px;
+}
+.settings-group input {
+    width: 100%;
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+}
+
+#hero {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+#links {
+    width: 400px;
+    text-align: left;
+    font-size: x-large;
+    color: white;
+    display: flex;
+    flex-direction: column;
+}
+
+#links a {
+    color: white;
+    text-decoration: none;
+    margin-top: 20px;
+    margin: 10px 0px;
+    border: white 1px solid;
+    border-radius: 5px;
+    padding: 10px;
+}
+
+#links a:hover {
+    background-color: #1f1f1f;
+    cursor: pointer;
+}
+
+#header {
+    max-width: 1200px;
+}
+
+/* Navbar */
+#navbar {
+    display: flex;
+    flex-direction: row;
+}
+
+#navbar a {
+    color: #ffffff;
+    margin-right: 20px;
+    text-decoration: none;
+    transition: color 0.2s ease;
+}
+
+#navbar a:hover {
+    cursor: pointer;
+    color: #91a4d2;
+}
+
+/* Blog page */
+#blog {
+    margin-top: 50px;
+}
+
+#blog a {
+    color: #ffffff;
+    margin-top: 50px;
+}
