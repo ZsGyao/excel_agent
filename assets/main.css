@@ -233,3 +233,11 @@ body {
     color: #ffffff;
     margin-top: 50px;
 }
+
+.profile-item:hover {
+    background-color: #f9f9f9 !important;
+}
+.profile-item.active {
+    border-color: var(--accent-color) !important;
+    background-color: #fff0f5 !important; /* 淡淡的粉色 */
+}

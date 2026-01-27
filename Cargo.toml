@@ -22,6 +22,11 @@ pyo3 = { version = "0.20", features = ["auto-initialize", "abi3-py311"] }
 reqwest = { version = "0.11", features = ["json"] }
 tokio = { version = "1", features = ["full"] }
 
+# 用于获取系统标准路径 (AppData)
+directories = "5.0"
+# 用于生成唯一ID
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
 [features]
 default = ["desktop"]
 web = ["dioxus/web"]
