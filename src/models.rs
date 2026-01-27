@@ -82,3 +82,10 @@ pub struct ChatResponse {
 pub struct Choice {
     pub message: MessageApi,
 }
+
+// AI 回复的结构化定义
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct AiReply {
+    pub reply_type: String, // "code" 或 "chat"
+    pub content: String,    // 代码内容 或 聊天文本
+}
