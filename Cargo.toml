@@ -8,24 +8,17 @@ edition = "2021"
 
 [dependencies]
 dioxus = { version = "0.7.3", features = ["desktop", "router"] }
-# 日志库
-dioxus-logger = "0.7.3"
+dioxus-logger = "0.7.3" # 日志库
 tracing = "0.1"
-
-# 序列化支持
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] } # 序列化支持
 serde_json = "1.0"
-
 pyo3 = { version = "0.20", features = ["auto-initialize", "abi3-py311"] }
-
-# HTTP 客户端，用于调用 AI API
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.11", features = ["json"] } # HTTP 客户端，用于调用 AI API
 tokio = { version = "1", features = ["full"] }
-
-# 用于获取系统标准路径 (AppData)
-directories = "5.0"
-# 用于生成唯一ID
-uuid = { version = "1.0", features = ["v4", "serde"] }
+directories = "5.0" # 用于获取系统标准路径 (AppData)
+uuid = { version = "1.0", features = ["v4", "serde"] } # 用于生成唯一ID
+image = "0.24"        # 负责读取图标文件
+anyhow = "1.0"         # 处理错误
 
 [features]
 default = ["desktop"]

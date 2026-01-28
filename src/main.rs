@@ -4,10 +4,16 @@ mod components;
 mod models;
 mod services;
 
+use std::path::Path;
+use std::time::Duration;
+
+use dioxus::desktop::tao::platform::windows::WindowBuilderExtWindows;
+use dioxus::desktop::trayicon::{Icon, TrayIconBuilder, TrayIconEvent};
 use dioxus::desktop::{Config, LogicalSize, WindowBuilder};
 use dioxus::html::HasFileData;
 use dioxus::prelude::*;
 
+use crate::components::title_bar::TitleBar;
 use crate::services::config::load_config;
 use components::{
     chat_view::ChatView, input_area::InputArea, settings::Settings, sidebar::Sidebar,
@@ -16,25 +22,83 @@ use models::{ChatMessage, View};
 
 fn main() {
     dioxus_logger::init(tracing::Level::INFO).expect("failed to init logger");
-
     services::python::init_python_env();
 
-    let config = Config::new()
-        .with_custom_head(r#"<link rel="stylesheet" href="style.css">"#.to_string())
-        .with_window(
-            WindowBuilder::new()
-                .with_title("Excel AI Agent")
-                .with_inner_size(LogicalSize::new(900.0, 700.0))
-                .with_decorations(false)
-                .with_transparent(true)
-                .with_resizable(true),
-        );
+    let icon_path = "assets/icon.png";
+    let icon = load_icon(Path::new(icon_path));
+
+    // Create system tray, use Box::leak to keep trap alive during program runtime
+    let _tray = match icon {
+        Ok(i) => {
+            Some(Box::leak(Box::new(
+                TrayIconBuilder::new()
+                    .with_tooltip("Excel AI Agent") // Show text when mouse hover
+                    .with_icon(i)
+                    .build()
+                    .unwrap(),
+            )))
+        }
+        Err(_) => {
+            println!("⚠️ 警告：找不到 assets/icon.png，托盘图标加载失败");
+            None
+        }
+    };
+
+    // Create Window builder and config
+    let window_builder = WindowBuilder::new()
+        .with_title("Excel Agent")
+        .with_inner_size(LogicalSize::new(900.0, 700.0))
+        .with_decorations(false)
+        .with_transparent(true)
+        .with_visible(true)
+        .with_undecorated_shadow(false)
+        .with_skip_taskbar(true) // Hide from the taskbar
+        .with_always_on_top(false);
+
+    let config = Config::new().with_window(window_builder);
 
     LaunchBuilder::desktop().with_cfg(config).launch(App);
 }
 
+/// Read Png and transform to Icon
+fn load_icon(path: &Path) -> anyhow::Result<Icon> {
+    let (icon_rgba, icon_width, icon_height) = {
+        let image = image::open(path)?.into_rgba8();
+        let (width, height) = image.dimensions();
+        let rgba = image.into_raw();
+        (rgba, width, height)
+    };
+    Ok(Icon::from_rgba(icon_rgba, icon_width, icon_height)?)
+}
+
 #[component]
 fn App() -> Element {
+    // Get window handle to control show/hide
+    let window = dioxus::desktop::use_window();
+
+    // Listen tray click envet
+    // Use use_future start async task
+    use_future(move || {
+        let window = window.clone();
+        async move {
+            let receiver = TrayIconEvent::receiver();
+
+            loop {
+                // Use try_recv to check event unblocking
+                if let Ok(event) = receiver.try_recv() {
+                    // if is click event
+                    if let TrayIconEvent::Click { .. } = event {
+                        println!("托盘图标被点击！");
+                        window.set_visible(true);
+                        window.set_focus();
+                    }
+                }
+                // Sleep a while, avoid loop use 100% CPU
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        }
+    });
+
     let current_view = use_signal(|| View::Chat);
     let mut messages = use_signal(|| {
         vec![ChatMessage {
@@ -57,48 +121,53 @@ fn App() -> Element {
         document::Stylesheet { href: asset!("/assets/main.css") }
 
         div {
-            class: "app-container",
-            ondragover: move |evt| { evt.prevent_default(); if !is_dragging() { is_dragging.set(true); } },
-            ondragleave: move |evt| { evt.prevent_default(); is_dragging.set(false); },
-            ondrop: move |evt| {
-                evt.prevent_default();
-                is_dragging.set(false);
-                let files = evt.data().files();
-                if let Some(first_file) = files.first() {
-                    // todo: Set the actually file path, now just support project dir
-                    let file_name = first_file.name();
-                    let current_dir = std::env::current_dir().unwrap();
-                    let full_path = current_dir.join(&file_name).to_str().unwrap().to_string();
+            class: "window-frame",
+            TitleBar {  }
 
-                    last_file_path.set(full_path.clone());
+            div {
+                class: "app-container",
+                ondragover: move |evt| { evt.prevent_default(); if !is_dragging() { is_dragging.set(true); } },
+                ondragleave: move |evt| { evt.prevent_default(); is_dragging.set(false); },
+                ondrop: move |evt| {
+                    evt.prevent_default();
+                    is_dragging.set(false);
+                    let files = evt.data().files();
+                    if let Some(first_file) = files.first() {
+                        // todo: Set the actually file path, now just support project dir
+                        let file_name = first_file.name();
+                        let current_dir = std::env::current_dir().unwrap();
+                        let full_path = current_dir.join(&file_name).to_str().unwrap().to_string();
 
-                    let new_id = messages.read().len();
-                    messages.write().push(ChatMessage {id:new_id,text:format!("📂 已加载: {}",file_name),is_user:false,table:None, temp_id: None, status: models::ActionStatus::None });
-                }
-            },
+                        last_file_path.set(full_path.clone());
 
-            Sidebar { current_view: current_view }
-
-            div { class: "content-area",
-                if is_dragging() { div { class: "drag-overlay", "📂 投喂 Excel！" } }
-
-                if is_loading() {
-                    div {
-                        class: "loading-badge",
-                        "🧠 AI 思考中..."
+                        let new_id = messages.read().len();
+                        messages.write().push(ChatMessage {id:new_id,text:format!("📂 已加载: {}",file_name),is_user:false,table:None, temp_id: None, status: models::ActionStatus::None });
                     }
-                }
+                },
 
-                if current_view() == View::Chat {
-                    ChatView { messages: messages, last_file_path }
-                    InputArea {
-                        messages: messages,
-                        last_file_path: last_file_path,
-                        is_loading: is_loading,
-                        config: config,
+                Sidebar { current_view: current_view }
+
+                div { class: "content-area",
+                    if is_dragging() { div { class: "drag-overlay", "📂 投喂 Excel！" } }
+
+                    if is_loading() {
+                        div {
+                            class: "loading-badge",
+                            "🧠 AI 思考中..."
+                        }
                     }
-                } else if current_view() == View::Settings {
-                    Settings { config: config }
+
+                    if current_view() == View::Chat {
+                        ChatView { messages: messages, last_file_path }
+                        InputArea {
+                            messages: messages,
+                            last_file_path: last_file_path,
+                            is_loading: is_loading,
+                            config: config,
+                        }
+                    } else if current_view() == View::Settings {
+                        Settings { config: config }
+                    }
                 }
             }
         }
