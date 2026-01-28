@@ -241,3 +241,56 @@ body {
     border-color: var(--accent-color) !important;
     background-color: #fff0f5 !important; /* 淡淡的粉色 */
 }
+
+.loading-badge {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background-color: #ff69b4; /* 这里的颜色也会有取色器弹出 */
+    color: white;
+    padding: 5px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    z-index: 999;
+}
+
+/* 表格容器：允许横向滚动 */
+.table-container {
+    overflow-x: auto;
+    margin-top: 10px;
+    border-radius: 8px;
+    border: 1px solid #eee;
+    background: white;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    min-width: 400px; /* 防止列太挤 */
+}
+
+th {
+    background-color: #f8f9fa;
+    color: #666;
+    font-weight: 600;
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 2px solid #eee;
+    white-space: nowrap; /* 表头不换行 */
+}
+
+td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #eee;
+    color: #333;
+}
+
+tr:last-child td {
+    border-bottom: none;
+}
+
+/* 斑马纹 */
+tr:nth-child(even) {
+    background-color: #fcfcfc;
+}

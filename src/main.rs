@@ -8,12 +8,11 @@ use dioxus::desktop::{Config, LogicalSize, WindowBuilder};
 use dioxus::html::HasFileData;
 use dioxus::prelude::*;
 
-use models::{ChatMessage, View};
-// ✅ 修复点：明确引入 load_config
 use crate::services::config::load_config;
 use components::{
     chat_view::ChatView, input_area::InputArea, settings::Settings, sidebar::Sidebar,
 };
+use models::{ChatMessage, View};
 
 fn main() {
     dioxus_logger::init(tracing::Level::INFO).expect("failed to init logger");
@@ -40,10 +39,10 @@ fn App() -> Element {
             id: 0,
             text: "👋 嗨！把 Excel 拖进来，然后去设置里配一下 API Key。".into(),
             is_user: false,
+            table: None,
         }]
     });
 
-    // ✅ 修复点：调用 load_config() 加载配置
     let config = use_signal(|| load_config());
 
     let mut last_file_path = use_signal(|| String::new());
@@ -62,6 +61,7 @@ fn App() -> Element {
                 is_dragging.set(false);
                 let files = evt.data().files();
                 if let Some(first_file) = files.first() {
+                    // todo: Set the actually file path, now just support project dir
                     let file_name = first_file.name();
                     let current_dir = std::env::current_dir().unwrap();
                     let full_path = current_dir.join(&file_name).to_str().unwrap().to_string();
@@ -69,11 +69,7 @@ fn App() -> Element {
                     last_file_path.set(full_path.clone());
 
                     let new_id = messages.read().len();
-                    messages.write().push(ChatMessage {
-                        id: new_id,
-                        text: format!("📂 已加载: {}", file_name),
-                        is_user: false
-                    });
+                    messages.write().push(ChatMessage {id:new_id,text:format!("📂 已加载: {}",file_name),is_user:false, table: None });
                 }
             },
 
@@ -84,7 +80,7 @@ fn App() -> Element {
 
                 if is_loading() {
                     div {
-                        style: "position: absolute; top: 10px; right: 10px; background: #ff69b4; color: white; padding: 5px 10px; border-radius: 12px; font-size: 12px; z-index: 999;",
+                        class: "loading-badge",
                         "🧠 AI 思考中..."
                     }
                 }

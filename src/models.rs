@@ -1,27 +1,45 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Basic View
 #[derive(Clone, PartialEq, Copy)]
 pub enum View {
     Chat,
     Settings,
 }
 
+/// Excel Table Struct
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct TableData {
+    pub columns: Vec<String>,
+    pub data: Vec<Vec<serde_json::Value>>, // Table unit might be num,str,null.. ,use serde_json to cover all type
+}
+
+/// Chat Message
 #[derive(Clone, PartialEq, Debug)]
 pub struct ChatMessage {
     pub id: usize,
     pub text: String,
     pub is_user: bool,
+    pub table: Option<TableData>,
 }
 
-// ---------- 配置相关模型 ------------
+/// Python execute result, used to prase JSON that the backend.py return
+#[derive(Deserialize, Debug)]
+pub struct PyExecResult {
+    pub status: String,             // "success" | "error"
+    pub message: String,            // The text back to user
+    pub preview: Option<TableData>, // Preview Data
+}
+
+/// Ai Model Config
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ModelProfile {
     pub id: String,
-    pub name: String, // 给用户看的别名，如 "我的 DeepSeek"
+    pub name: String, // User set name，like "My DeepSeek"
     pub base_url: String,
     pub api_key: String,
-    pub model_id: String, // API 参数用的模型名，如 "moonshot-v1-8k"
+    pub model_id: String, // API param used model name，like "moonshot-v1-8k"
 }
 
 impl ModelProfile {
@@ -44,7 +62,7 @@ pub struct AppConfig {
 
 impl Default for AppConfig {
     fn default() -> Self {
-        // 默认创建一个 Moonshot 的配置模板
+        // Default create Moonshot config
         let default_profile = ModelProfile {
             id: Uuid::new_v4().to_string(),
             name: "Moonshot Kimi".to_string(),
@@ -60,13 +78,14 @@ impl Default for AppConfig {
     }
 }
 
-// --- API 相关结构 ---
+/// API Request
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ChatRequest {
     pub model: String,
     pub messages: Vec<MessageApi>,
 }
 
+/// Message Api
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct MessageApi {
     pub role: String,
@@ -83,9 +102,9 @@ pub struct Choice {
     pub message: MessageApi,
 }
 
-// AI 回复的结构化定义
+// AI replay struct define
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AiReply {
-    pub reply_type: String, // "code" 或 "chat"
-    pub content: String,    // 代码内容 或 聊天文本
+    pub reply_type: String, // "code" or "chat"
+    pub content: String,    // code or chat text
 }
