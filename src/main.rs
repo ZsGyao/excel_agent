@@ -40,6 +40,8 @@ fn App() -> Element {
             text: "👋 嗨！把 Excel 拖进来，然后去设置里配一下 API Key。".into(),
             is_user: false,
             table: None,
+            temp_id: None,
+            status: models::ActionStatus::None,
         }]
     });
 
@@ -69,7 +71,7 @@ fn App() -> Element {
                     last_file_path.set(full_path.clone());
 
                     let new_id = messages.read().len();
-                    messages.write().push(ChatMessage {id:new_id,text:format!("📂 已加载: {}",file_name),is_user:false, table: None });
+                    messages.write().push(ChatMessage {id:new_id,text:format!("📂 已加载: {}",file_name),is_user:false,table:None, temp_id: None, status: models::ActionStatus::None });
                 }
             },
 
@@ -86,7 +88,7 @@ fn App() -> Element {
                 }
 
                 if current_view() == View::Chat {
-                    ChatView { messages: messages }
+                    ChatView { messages: messages, last_file_path }
                     InputArea {
                         messages: messages,
                         last_file_path: last_file_path,

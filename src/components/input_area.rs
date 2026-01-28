@@ -2,6 +2,7 @@ use crate::models::{AppConfig, ChatMessage, PyExecResult};
 use crate::services::{ai, python};
 use dioxus::prelude::*;
 use tokio::task;
+use uuid::Uuid;
 
 #[component]
 pub fn InputArea(
@@ -26,6 +27,8 @@ pub fn InputArea(
             text: user_prompt.clone(),
             is_user: true,
             table: None,
+            temp_id: None,
+            status: crate::models::ActionStatus::None,
         });
         input_text.set(String::new());
 
@@ -41,6 +44,8 @@ pub fn InputArea(
                     text: "⚠️ 请先拖入一个 Excel 文件（哪怕是空文件），我才能开始工作。".into(),
                     is_user: false,
                     table: None,
+                    temp_id: None,
+                    status: crate::models::ActionStatus::None,
                 });
                 is_loading.set(false);
                 return;
@@ -66,6 +71,8 @@ pub fn InputArea(
                                 .into(),
                             is_user: false,
                             table: None,
+                            temp_id: None,
+                            status: crate::models::ActionStatus::None,
                         });
                         is_loading.set(false);
                         return;
@@ -87,6 +94,8 @@ pub fn InputArea(
                         text: "❌ 系统错误: 线程崩溃".into(),
                         is_user: false,
                         table: None,
+                        temp_id: None,
+                        status: crate::models::ActionStatus::None,
                     });
                     is_loading.set(false);
                     return;
@@ -117,9 +126,17 @@ pub fn InputArea(
                             let file_path_for_exec = file_path.clone();
                             let code_for_exec = reply.content.clone();
 
+                            // Gnerate uuid
+                            let operation_id = Uuid::new_v4().to_string();
+                            let op_id_for_exec = operation_id.clone();
+
                             // Execute Python Backend
                             let exec_join = task::spawn_blocking(move || {
-                                python::run_python_code(&file_path_for_exec, &code_for_exec)
+                                python::run_python_code(
+                                    &file_path_for_exec,
+                                    &code_for_exec,
+                                    &op_id_for_exec,
+                                )
                             })
                             .await;
 
@@ -151,6 +168,8 @@ pub fn InputArea(
                                                         ),
                                                         is_user: false,
                                                         table: None,
+                                                        temp_id: None,
+                                                        status: crate::models::ActionStatus::None,
                                                     });
                                                 }
                                             } else {
@@ -165,7 +184,9 @@ pub fn InputArea(
                                                     id: ai_id,
                                                     text: final_reply,
                                                     is_user: false,
-                                                    table: res.preview, // ✅ 注入表格数据
+                                                    table: res.preview,
+                                                    temp_id: Some(operation_id.clone()),
+                                                    status: crate::models::ActionStatus::Pending,
                                                 });
                                                 break;
                                             }
@@ -178,6 +199,8 @@ pub fn InputArea(
                                                 text: format!("❌ 内部通讯错误: {}", e),
                                                 is_user: false,
                                                 table: None,
+                                                temp_id: None,
+                                                status: crate::models::ActionStatus::None,
                                             });
                                             break;
                                         }
@@ -190,6 +213,8 @@ pub fn InputArea(
                                         text: "❌ Python 线程崩溃".into(),
                                         is_user: false,
                                         table: None,
+                                        temp_id: None,
+                                        status: crate::models::ActionStatus::None,
                                     });
                                     break;
                                 }
@@ -202,6 +227,8 @@ pub fn InputArea(
                                 text: reply.content,
                                 is_user: false,
                                 table: None,
+                                temp_id: None,
+                                status: crate::models::ActionStatus::None,
                             });
                             break;
                         }
@@ -213,6 +240,8 @@ pub fn InputArea(
                             text: format!("❌ 网络请求失败: {}", err),
                             is_user: false,
                             table: None,
+                            temp_id: None,
+                            status: crate::models::ActionStatus::None,
                         });
                         break;
                     }

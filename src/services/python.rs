@@ -1,9 +1,10 @@
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
+use pyo3::types::PyTuple;
 use std::env;
 use std::fs;
 
-/// 初始化 Python 环境路径
+/// Init Python Environment Path
 pub fn init_python_env() {
     let current_dir = env::current_dir().unwrap();
     let py_env_path = current_dir.join("py_env");
@@ -24,7 +25,7 @@ pub fn init_python_env() {
     println!("Python 环境已配置: {:?}", py_env_path);
 }
 
-/// 获取 Excel 列名
+/// Get Excel Columns Name
 pub fn get_excel_columns(file_path: &str) -> String {
     let current_dir = env::current_dir().unwrap();
     let backend_path = current_dir.join("backend.py");
@@ -41,19 +42,31 @@ pub fn get_excel_columns(file_path: &str) -> String {
     .unwrap_or_else(|e| format!("读取列名失败: {}", e))
 }
 
-/// 执行 Python 代码
-pub fn run_python_code(file_path: &str, code: &str) -> String {
+/// Execute Python Code
+pub fn run_python_code(file_path: &str, code: &str, temp_id: &str) -> String {
+    run_python_script("execute_analysis", (file_path, code, temp_id))
+}
+
+/// Confirm Save
+pub fn confirm_save(file_path: &str, temp_id: &str) -> String {
+    run_python_script("confirm_save", (file_path, temp_id))
+}
+
+/// Confirm Discard Chaneg
+pub fn discard_change(file_path: &str, temp_id: &str) -> String {
+    run_python_script("discard_change", (file_path, temp_id))
+}
+
+/// Inner Aux Fun
+fn run_python_script(func_name: &str, args: impl IntoPy<Py<PyTuple>>) -> String {
     let current_dir = env::current_dir().unwrap();
     let backend_path = current_dir.join("backend.py");
     let backend_code = fs::read_to_string(backend_path).unwrap_or_default();
 
     Python::with_gil(|py| -> PyResult<String> {
         let backend = PyModule::from_code(py, &backend_code, "backend.py", "backend_module")?;
-        let result: String = backend
-            .getattr("execute_analysis")?
-            .call1((file_path, code))?
-            .extract()?;
+        let result: String = backend.getattr(func_name)?.call1(args)?.extract()?;
         Ok(result)
     })
-    .unwrap_or_else(|e| format!("Python 执行出错: {}", e))
+    .unwrap_or_else(|e| format!("Python 调用失败: {}", e))
 }

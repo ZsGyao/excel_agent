@@ -294,3 +294,20 @@ tr:last-child td {
 tr:nth-child(even) {
     background-color: #fcfcfc;
 }
+
+.btn-confirm {
+    background-color: #4caf50;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+.btn-discard {
+    background-color: #f44336;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+}

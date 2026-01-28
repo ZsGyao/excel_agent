@@ -8,6 +8,15 @@ pub enum View {
     Settings,
 }
 
+/// Action Status
+#[derive(Clone, PartialEq, Debug)]
+pub enum ActionStatus {
+    None,      // Normal chat, no operation
+    Pending,   // Wait to comfirm, show buttom 'confirm / discard'
+    Confirmed, // Already comfirmed
+    Discarded, // Already discarded
+}
+
 /// Excel Table Struct
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct TableData {
@@ -22,6 +31,8 @@ pub struct ChatMessage {
     pub text: String,
     pub is_user: bool,
     pub table: Option<TableData>,
+    pub temp_id: Option<String>, // Assocate to temp file id
+    pub status: ActionStatus,    // Current action status
 }
 
 /// Python execute result, used to prase JSON that the backend.py return
