@@ -25,6 +25,8 @@ fn main() {
             WindowBuilder::new()
                 .with_title("Excel AI Agent")
                 .with_inner_size(LogicalSize::new(900.0, 700.0))
+                .with_decorations(false)
+                .with_transparent(true)
                 .with_resizable(true),
         );
 
