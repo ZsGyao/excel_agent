@@ -29,6 +29,7 @@ pub fn InputArea(
             table: None,
             temp_id: None,
             status: crate::models::ActionStatus::None,
+            image: None,
         });
         input_text.set(String::new());
 
@@ -46,6 +47,7 @@ pub fn InputArea(
                     table: None,
                     temp_id: None,
                     status: crate::models::ActionStatus::None,
+                    image: None,
                 });
                 is_loading.set(false);
                 return;
@@ -73,6 +75,7 @@ pub fn InputArea(
                             table: None,
                             temp_id: None,
                             status: crate::models::ActionStatus::None,
+                            image: None,
                         });
                         is_loading.set(false);
                         return;
@@ -96,6 +99,7 @@ pub fn InputArea(
                         table: None,
                         temp_id: None,
                         status: crate::models::ActionStatus::None,
+                        image: None,
                     });
                     is_loading.set(false);
                     return;
@@ -170,6 +174,7 @@ pub fn InputArea(
                                                         table: None,
                                                         temp_id: None,
                                                         status: crate::models::ActionStatus::None,
+                                                        image: None,
                                                     });
                                                 }
                                             } else {
@@ -187,6 +192,7 @@ pub fn InputArea(
                                                     table: res.preview,
                                                     temp_id: Some(operation_id.clone()),
                                                     status: crate::models::ActionStatus::Pending,
+                                                    image: None,
                                                 });
                                                 break;
                                             }
@@ -201,6 +207,7 @@ pub fn InputArea(
                                                 table: None,
                                                 temp_id: None,
                                                 status: crate::models::ActionStatus::None,
+                                                image: None,
                                             });
                                             break;
                                         }
@@ -215,6 +222,7 @@ pub fn InputArea(
                                         table: None,
                                         temp_id: None,
                                         status: crate::models::ActionStatus::None,
+                                        image: None,
                                     });
                                     break;
                                 }
@@ -229,6 +237,7 @@ pub fn InputArea(
                                 table: None,
                                 temp_id: None,
                                 status: crate::models::ActionStatus::None,
+                                image: None,
                             });
                             break;
                         }
@@ -242,6 +251,7 @@ pub fn InputArea(
                             table: None,
                             temp_id: None,
                             status: crate::models::ActionStatus::None,
+                            image: None,
                         });
                         break;
                     }

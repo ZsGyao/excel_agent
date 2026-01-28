@@ -4,3 +4,4 @@ pub mod input_area;
 pub mod settings;
 pub mod sidebar;
 pub mod title_bar;
+pub mod widget_ball;

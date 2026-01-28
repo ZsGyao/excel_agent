@@ -287,3 +287,71 @@ tr:nth-child(even) {
         opacity: 1;
     }
 }
+
+/* =========================================
+   10. 悬浮球模式 (Widget Mode)
+   ========================================= */
+.widget-container {
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+}
+
+.widget-ball {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    /* 漂亮的渐变粉色 */
+    background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 99%, #fecfef 100%);
+    box-shadow:
+        0 4px 15px rgba(255, 105, 180, 0.5),
+        inset 0 -5px 10px rgba(0, 0, 0, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 30px;
+    cursor: grab; /* 提示可拖动 */
+    transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    user-select: none;
+    border: 2px solid white;
+    position: relative;
+    z-index: 9999;
+}
+
+/* 悬停变大效果 */
+.widget-ball:hover {
+    transform: scale(1.1);
+    box-shadow: 0 8px 25px rgba(255, 105, 180, 0.7);
+}
+
+/* 点击时的按压效果 */
+.widget-ball:active {
+    transform: scale(0.9);
+    cursor: grabbing;
+}
+
+/* 拖拽文件进来时的“求投喂”状态 */
+.widget-ball.drag-hover {
+    transform: scale(1.3);
+    background: linear-gradient(135deg, #a18cd1 0%, #fbc2eb 100%);
+    box-shadow: 0 0 30px rgba(161, 140, 209, 0.8);
+    animation: shake 0.5s infinite;
+}
+
+@keyframes shake {
+    0% {
+        transform: scale(1.3) rotate(0deg);
+    }
+    25% {
+        transform: scale(1.3) rotate(-5deg);
+    }
+    75% {
+        transform: scale(1.3) rotate(5deg);
+    }
+    100% {
+        transform: scale(1.3) rotate(0deg);
+    }
+}

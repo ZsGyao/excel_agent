@@ -8,6 +8,13 @@ pub enum View {
     Settings,
 }
 
+/// Window Mode Status
+#[derive(Clone, PartialEq, Debug, Copy)]
+pub enum WindowMode {
+    Widget, // Floating ball (80*80)
+    Main,   // Main window   (900 * 700)
+}
+
 /// Action Status
 #[derive(Clone, PartialEq, Debug)]
 pub enum ActionStatus {
@@ -31,6 +38,7 @@ pub struct ChatMessage {
     pub text: String,
     pub is_user: bool,
     pub table: Option<TableData>,
+    pub image: Option<String>,
     pub temp_id: Option<String>, // Assocate to temp file id
     pub status: ActionStatus,    // Current action status
 }

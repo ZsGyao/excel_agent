@@ -14,6 +14,8 @@ use dioxus::html::HasFileData;
 use dioxus::prelude::*;
 
 use crate::components::title_bar::TitleBar;
+use crate::components::widget_ball::WidgetBall;
+use crate::models::WindowMode;
 use crate::services::config::load_config;
 use components::{
     chat_view::ChatView, input_area::InputArea, settings::Settings, sidebar::Sidebar,
@@ -47,13 +49,13 @@ fn main() {
     // Create Window builder and config
     let window_builder = WindowBuilder::new()
         .with_title("Excel Agent")
-        .with_inner_size(LogicalSize::new(900.0, 700.0))
+        .with_inner_size(LogicalSize::new(80.0, 80.0)) // Init is Float ball widget
         .with_decorations(false)
         .with_transparent(true)
         .with_visible(true)
         .with_undecorated_shadow(false)
         .with_skip_taskbar(true) // Hide from the taskbar
-        .with_always_on_top(false);
+        .with_always_on_top(true); // Float ball always on the top
 
     let config = Config::new().with_window(window_builder);
 
@@ -73,12 +75,28 @@ fn load_icon(path: &Path) -> anyhow::Result<Icon> {
 
 #[component]
 fn App() -> Element {
-    // Get window handle to control show/hide
     let window = dioxus::desktop::use_window();
+    let mut window_mode = use_signal(|| WindowMode::Widget);
+    let window_for_effect = window.clone();
+    // Dynamically adjust window size based on changes in monitoring mode
+    use_effect(move || {
+        match window_mode() {
+            WindowMode::Widget => {
+                // 变回小球
+                window_for_effect.set_inner_size(LogicalSize::new(80.0, 80.0));
+                // 这里可以加逻辑：吸附到屏幕边缘
+            }
+            WindowMode::Main => {
+                // 变成大窗口
+                window_for_effect.set_inner_size(LogicalSize::new(900.0, 700.0));
+                window_for_effect.set_focus();
+            }
+        }
+    });
 
-    // Listen tray click envet
-    // Use use_future start async task
+    // Listen tray click envet, Use use_future start async task
     use_future(move || {
+        // Get window handle to control show/hide
         let window = window.clone();
         async move {
             let receiver = TrayIconEvent::receiver();
@@ -91,6 +109,7 @@ fn App() -> Element {
                         println!("托盘图标被点击！");
                         window.set_visible(true);
                         window.set_focus();
+                        window_mode.set(WindowMode::Main);
                     }
                 }
                 // Sleep a while, avoid loop use 100% CPU
@@ -108,6 +127,7 @@ fn App() -> Element {
             table: None,
             temp_id: None,
             status: models::ActionStatus::None,
+            image: None,
         }]
     });
 
@@ -120,56 +140,88 @@ fn App() -> Element {
     rsx! {
         document::Stylesheet { href: asset!("/assets/main.css") }
 
-        div {
-            class: "window-frame",
-            TitleBar {  }
+        if window_mode() == WindowMode::Widget {
+            WidgetBall {
+                window_mode,
+                is_dragging,
+                messages,
+                last_file_path,
+            }
+        } else {
+            div { class: "window-frame",
+                // // 这里的 TitleBar 需要稍微改一下，最小化按钮变成“收起到悬浮球” todo
+                TitleBar {}
 
-            div {
-                class: "app-container",
-                ondragover: move |evt| { evt.prevent_default(); if !is_dragging() { is_dragging.set(true); } },
-                ondragleave: move |evt| { evt.prevent_default(); is_dragging.set(false); },
-                ondrop: move |evt| {
-                    evt.prevent_default();
-                    is_dragging.set(false);
-                    let files = evt.data().files();
-                    if let Some(first_file) = files.first() {
-                        // todo: Set the actually file path, now just support project dir
-                        let file_name = first_file.name();
-                        let current_dir = std::env::current_dir().unwrap();
-                        let full_path = current_dir.join(&file_name).to_str().unwrap().to_string();
-
-                        last_file_path.set(full_path.clone());
-
-                        let new_id = messages.read().len();
-                        messages.write().push(ChatMessage {id:new_id,text:format!("📂 已加载: {}",file_name),is_user:false,table:None, temp_id: None, status: models::ActionStatus::None });
-                    }
-                },
-
-                Sidebar { current_view: current_view }
-
-                div { class: "content-area",
-                    if is_dragging() { div { class: "drag-overlay", "📂 投喂 Excel！" } }
-
-                    if is_loading() {
-                        div {
-                            class: "loading-badge",
-                            "🧠 AI 思考中..."
+                div {
+                    class: "app-container",
+                    ondragover: move |evt| {
+                        evt.prevent_default();
+                        if !is_dragging() {
+                            is_dragging.set(true);
                         }
+                    },
+                    ondragleave: move |evt| {
+                        evt.prevent_default();
+                        is_dragging.set(false);
+                    },
+                    ondrop: move |evt| {
+                        evt.prevent_default();
+                        is_dragging.set(false);
+                        let files = evt.data().files();
+                        if let Some(first_file) = files.first() {
+                            // todo: Set the actually file path, now just support project dir
+                            let file_name = first_file.name();
+                            let current_dir = std::env::current_dir().unwrap();
+                            let full_path = current_dir.join(&file_name).to_str().unwrap().to_string();
+
+                            last_file_path.set(full_path.clone());
+
+                            let new_id = messages.read().len();
+                            messages
+                                .write()
+                                .push(ChatMessage {
+                                    id: new_id,
+                                    text: format!("📂 已加载: {}", file_name),
+                                    is_user: false,
+                                    table: None,
+                                    temp_id: None,
+                                    status: models::ActionStatus::None,
+                                    image: None,
+                                });
+                        }
+                    },
+                    div {
+                        style: "position: absolute; top: 10px; right: 50px; cursor: pointer; z-index: 9999;",
+                        onclick: move |_| window_mode.set(WindowMode::Widget),
+                        "⏬"
                     }
 
-                    if current_view() == View::Chat {
-                        ChatView { messages: messages, last_file_path }
-                        InputArea {
-                            messages: messages,
-                            last_file_path: last_file_path,
-                            is_loading: is_loading,
-                            config: config,
+                    Sidebar { current_view }
+
+                    div { class: "content-area",
+                        if is_dragging() {
+                            div { class: "drag-overlay", "📂 投喂 Excel！" }
                         }
-                    } else if current_view() == View::Settings {
-                        Settings { config: config }
+
+                        if is_loading() {
+                            div { class: "loading-badge", "🧠 AI 思考中..." }
+                        }
+
+                        if current_view() == View::Chat {
+                            ChatView { messages, last_file_path }
+                            InputArea {
+                                messages,
+                                last_file_path,
+                                is_loading,
+                                config,
+                            }
+                        } else if current_view() == View::Settings {
+                            Settings { config }
+                        }
                     }
                 }
             }
         }
+
     }
 }
