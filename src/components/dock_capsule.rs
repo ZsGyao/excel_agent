@@ -44,6 +44,9 @@ pub fn DockCapsule(
 
     // Mouse down
     let handle_mouse_down = move |evt: Event<MouseData>| {
+        evt.prevent_default();
+        evt.stop_propagation();
+
         if is_pinned() {
             return;
         }
