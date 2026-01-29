@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use dioxus::desktop::tao::platform::windows::WindowBuilderExtWindows;
 use dioxus::desktop::trayicon::{Icon, TrayIconBuilder, TrayIconEvent};
-use dioxus::desktop::{Config, LogicalSize, WindowBuilder};
+use dioxus::desktop::{Config, LogicalPosition, LogicalSize, WindowBuilder};
 use dioxus::html::HasFileData;
 use dioxus::prelude::*;
 
@@ -82,14 +82,42 @@ fn App() -> Element {
     use_effect(move || {
         match window_mode() {
             WindowMode::Widget => {
-                // 变回小球
-                window_for_effect.set_inner_size(LogicalSize::new(80.0, 80.0));
-                // 这里可以加逻辑：吸附到屏幕边缘
+                // 初始状态：小胶囊
+                // 宽度 40 (Logo + padding), 高度 60
+                window_for_effect.set_inner_size(LogicalSize::new(40.0, 60.0));
+                window_for_effect.set_always_on_top(true);
+
+                // TODO: 这里其实需要记忆上次是 Left 还是 Right，并恢复位置
+                // 暂时先让用户自己拖回去，或者默认吸附右边
             }
             WindowMode::Main => {
-                // 变成大窗口
-                window_for_effect.set_inner_size(LogicalSize::new(900.0, 700.0));
+                // 展开状态：长条面板 (手机比例)
+                let panel_width = 400.0;
+                let panel_height = 700.0;
+
+                // 获取屏幕宽度，判断当前在哪边，决定面板弹出的 X 坐标
+                let monitor = window_for_effect.current_monitor().unwrap();
+                let screen_width = monitor.size().width as f64 / monitor.scale_factor();
+                let win_pos = window_for_effect.outer_position().unwrap();
+                let win_x = win_pos.x as f64 / monitor.scale_factor();
+
+                // 如果当前在左半屏 -> 面板贴左 (x=0)
+                // 如果当前在右半屏 -> 面板贴右 (x = Screen - Panel_Width)
+                let new_x = if win_x < screen_width / 2.0 {
+                    0.0
+                } else {
+                    screen_width - panel_width
+                };
+
+                // 设置位置和大小
+                window_for_effect.set_outer_position(LogicalPosition::new(
+                    new_x,
+                    win_pos.y as f64 / monitor.scale_factor(),
+                ));
+                window_for_effect.set_inner_size(LogicalSize::new(panel_width, panel_height));
+
                 window_for_effect.set_focus();
+                window_for_effect.set_always_on_top(true); // 保持置顶
             }
         }
     });
