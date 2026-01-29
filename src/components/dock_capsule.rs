@@ -128,9 +128,8 @@ pub fn DockCapsule(
                 // 这能保证无论之前在哪里，展开后一定紧贴右边缘，绝无缝隙。
                 let target_x = screen_w - EXPANDED_W;
 
-                // 1. 先移动位置 (把左上角移到目标点)
+                // 先移动位置 (把左上角移到目标点)，再改变大小 (向右填充)
                 win_enter.set_outer_position(LogicalPosition::new(target_x, current_y));
-                // 2. 再改变大小 (向右填充)
                 win_enter.set_inner_size(LogicalSize::new(EXPANDED_W, EXPANDED_H));
             } else {
                 // 左侧吸附很简单，位置不变，只变大
@@ -165,11 +164,9 @@ pub fn DockCapsule(
                     // 🔥 核心修复：消除缩回卡顿
                     // 目标位置
                     let target_x = screen_w - COLLAPSED_W;
-
-                    // 1. 先把位置移回去 (瞬间跳到右边)
-                    win_async.set_outer_position(LogicalPosition::new(target_x, current_y));
-                    // 2. 再缩小尺寸
+                    // 先缩小尺寸，再移动位置
                     win_async.set_inner_size(LogicalSize::new(COLLAPSED_W, COLLAPSED_H));
+                    win_async.set_outer_position(LogicalPosition::new(target_x, current_y));
                 } else {
                     win_async.set_inner_size(LogicalSize::new(COLLAPSED_W, COLLAPSED_H));
                     win_async.set_outer_position(LogicalPosition::new(0.0, current_y));
