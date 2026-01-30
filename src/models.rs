@@ -11,8 +11,9 @@ pub enum View {
 /// Window Mode Status
 #[derive(Clone, PartialEq, Debug, Copy)]
 pub enum WindowMode {
-    Widget, // Floating ball (80*80)
-    Main,   // Main window   (900 * 700)
+    Widget,   // Floating ball
+    Main,     // Main window
+    Settings, // Settings panel
 }
 
 /// Action Status

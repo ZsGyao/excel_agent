@@ -105,11 +105,12 @@ fn App() -> Element {
     // 使用 Option 是为了处理首次启动还没有记录的情况
     let mut last_widget_pos = use_signal(|| None::<PhysicalPosition<i32>>);
 
-    // 尺寸常量
-    const CAPSULE_W: f64 = 140.0;
+    const CAPSULE_W: f64 = 140.0; // 尺寸定义
     const CAPSULE_H: f64 = 56.0;
-    const CARD_W: f64 = 480.0;
-    const MARGIN: f64 = 60.0;
+    const CARD_W: f64 = 480.0; // 聊天窗口
+    const SETTINGS_W: f64 = 750.0; // 设置窗口
+    const SETTINGS_H: f64 = 550.0;
+    const MARGIN: f64 = 60.0; // 上下边距距离
 
     // 初始化：强制把胶囊放到屏幕右边缘 (垂直居中)
     let window_init = window.clone();
@@ -199,6 +200,17 @@ fn App() -> Element {
                 window_effect.set_focus();
                 window_effect.set_always_on_top(true);
             }
+            WindowMode::Settings => {
+                // 设置模式下，我们把它放在屏幕正中间，取消置顶，方便操作
+                let center_x = (work_x_phys as f64 / scale) + (work_w - SETTINGS_W) / 2.0;
+                let center_y = work_top + (work_h - SETTINGS_H) / 2.0;
+
+                window_effect.set_inner_size(LogicalSize::new(SETTINGS_W, SETTINGS_H));
+                window_effect.set_outer_position(LogicalPosition::new(center_x, center_y));
+
+                // 设置界面通常不需要一直置顶，或者你可以根据喜好保留
+                window_effect.set_always_on_top(false);
+            }
         }
     });
 
@@ -250,6 +262,15 @@ fn App() -> Element {
 
         if window_mode() == WindowMode::Widget {
             DockCapsule { window_mode, messages, last_file_path }
+        } else if window_mode() == WindowMode::Settings {
+            // 🔥 独立的设置界面容器
+            div { class: "window-frame settings-panel",
+                Settings {
+                    config,
+                    // 传一个回调给 Settings 组件，让它可以切回 Chat
+                    on_close: move |_| window_mode.set(WindowMode::Main),
+                }
+            }
         } else {
             // Main 面板
             div { class: "window-frame main-panel",
@@ -257,6 +278,13 @@ fn App() -> Element {
                 div { class: "panel-header",
                     div { class: "title-text", "Excel AI Agent" }
                     // 只是收起，不关闭
+                    // 设置按钮
+                    div {
+                        class: "icon-btn",
+                        title: "设置",
+                        onclick: move |_| window_mode.set(WindowMode::Settings),
+                        "⚙️"
+                    }
                     div {
                         style: "cursor: pointer; padding: 5px;",
                         onclick: move |_| window_mode.set(WindowMode::Widget),
@@ -284,24 +312,19 @@ fn App() -> Element {
                         if let Some(first_file) = files.first() {} // ... 之前的逻辑 ...
                     },
 
-                    Sidebar { current_view }
-
                     div { class: "content-area",
                         if is_dragging() {
                             div { class: "drag-overlay", "📂 投喂 Excel！" }
                         }
 
-                        if current_view() == View::Chat {
-                            ChatView { messages, last_file_path }
-                            InputArea {
-                                messages,
-                                last_file_path,
-                                is_loading,
-                                config,
-                            }
-                        } else if current_view() == View::Settings {
-                            Settings { config }
+                        ChatView { messages, last_file_path }
+                        InputArea {
+                            messages,
+                            last_file_path,
+                            is_loading,
+                            config,
                         }
+
                     }
                 }
             }
