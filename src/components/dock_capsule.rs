@@ -85,8 +85,21 @@ pub fn DockCapsule(
     let mut is_dragging = use_signal(|| false);
     let mut debounce_task = use_signal(|| None::<Task>);
 
+    // 默认为 false，这会给组件加上 .no-anim 类，禁止一切过渡效果
+    let mut anim_ready = use_signal(|| false);
+
     const EXPANDED_W: f64 = 140.0;
     const EXPANDED_H: f64 = 56.0;
+
+    // 🔥 核心修复：组件挂载后，延迟一小会儿再开启动画
+    // 这样初次渲染（从 Main 切回来时）就是瞬间完成的，不会有缩放过程
+    use_effect(move || {
+        spawn(async move {
+            // 50ms 足够浏览器完成初次绘制布局了
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            anim_ready.set(true);
+        });
+    });
 
     // 🔥 监听 is_dragging 状态的副作用
     let window_drag_loop = window.clone();
@@ -221,14 +234,16 @@ pub fn DockCapsule(
             "right"
         }
     );
+    // 🔥 动态添加 .no-anim 类
     let capsule_cls = format!(
-        "dock-capsule {} {}",
+        "dock-capsule {} {} {}",
         if dock_side() == DockSide::Left {
             "left"
         } else {
             "right"
         },
-        if is_hovering() { "expanded" } else { "" }
+        if is_hovering() { "expanded" } else { "" },
+        if !anim_ready() { "no-anim" } else { "" } // 刚加载时禁用动画
     );
 
     rsx! {
