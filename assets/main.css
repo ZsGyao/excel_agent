@@ -13,95 +13,148 @@ body {
     height: 100%;
     overflow: hidden;
     font-family: "Segoe UI", sans-serif;
+
+    /* 🔥 关键修复 1：背景透明，且默认让鼠标穿透 */
+    background: transparent !important;
+    pointer-events: none;
+    /* 让鼠标穿过空白区域 */
 }
 
 /* =========================================
-   1. 沉浸式侧边胶囊 (Dock Widget) - 核心美化
+   1. 沉浸式侧边胶囊 (Dock Widget)
    ========================================= */
+/* 容器：利用 Flex 布局控制胶囊靠左还是靠右 */
 .dock-container {
-    width: 100vw;
-    height: 100vh;
-    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    padding: 0;
     overflow: hidden;
+    /* 容器本身也穿透，只拦截胶囊 */
+    pointer-events: none;
 }
 
+/* === 胶囊本体 (动画核心) === */
 .dock-capsule {
-    position: absolute;
-    /* 胶囊尺寸：模仿沉浸式翻译 */
+    /* 基础宽度 (收起状态) */
     width: 48px;
     height: 56px;
-    background: #ffffff;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-    /* 精致的阴影 */
+    background: rgba(255, 255, 255, 0.95);
+    /* 微透明增加质感 */
+    backdrop-filter: blur(10px);
+    /* 毛玻璃效果 */
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: grab;
-    z-index: 1000;
-    transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
     border: 1px solid rgba(0, 0, 0, 0.05);
+    overflow: hidden;
+
+    /* 🔥 关键：丝滑动画曲线 (iOS 风格) */
+    transition: width 0.4s cubic-bezier(0.2, 0.8, 0.2, 1),
+        border-radius 0.4s cubic-bezier(0.2, 0.8, 0.2, 1),
+        background-color 0.3s;
+
+    /* 🔥 关键修复 2：胶囊本体强制捕获鼠标 */
+    pointer-events: auto;
 }
 
-/* === 左吸附样式 === */
+/* 展开状态 (由 Rust 控制 class) */
+.dock-capsule.expanded {
+    width: 140px;
+    background: #ffffff;
+}
+
+/* === 左吸附 === */
+.dock-container.left {
+    justify-content: flex-start;
+}
+
 .dock-capsule.left {
-    left: 0;
-    border-radius: 0 16px 16px 0;
-    /* 只有右边圆角 */
+    border-radius: 0 18px 18px 0;
     border-left: none;
 }
 
-/* === 右吸附样式 === */
+/* === 右吸附 === */
+.dock-container.right {
+    justify-content: flex-end;
+}
+
 .dock-capsule.right {
-    right: 0;
-    border-radius: 16px 0 0 16px;
-    /* 只有左边圆角 */
+    border-radius: 18px 0 0 18px;
     border-right: none;
 }
 
-/* 悬停时的展开效果 */
-.dock-capsule:hover {
-    width: 140px;
-    /* 展开宽度 */
-}
-
-/* 内容布局 */
+/* === 内部布局 === */
 .capsule-content {
     display: flex;
     align-items: center;
-    gap: 12px;
     width: 100%;
     height: 100%;
-    padding: 0 8px;
-    overflow: hidden;
+    padding: 0 6px;
+    position: relative;
 }
 
-/* 图标 (你的 icon.png) */
+/* 图标 */
 .app-icon {
-    width: 32px;
-    height: 32px;
-    border-radius: 8px;
-    /* 轻微圆角 */
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
     object-fit: cover;
     flex-shrink: 0;
+    z-index: 2;
+    transition: transform 0.3s ease;
 }
 
-/* 菜单区 (Hover 显示) */
+/* === 菜单区域 (动画重点) === */
 .menu-area {
     display: flex;
+    align-items: center;
     gap: 8px;
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    margin: auto;
+
+    /* 默认隐藏状态 */
     opacity: 0;
-    transform: translateX(10px);
-    transition: all 0.2s ease;
+    pointer-events: none;
+    transform: scale(0.9) translateX(-10px);
+
+    /* 动画过渡 */
+    transition: opacity 0.3s ease,
+        transform 0.4s cubic-bezier(0.18, 0.89, 0.32, 1.28);
 }
 
-.dock-capsule:hover .menu-area {
+/* 左吸附时 */
+.dock-capsule.left .menu-area {
+    left: 48px;
+}
+
+/* 右吸附时 (反转) */
+.dock-capsule.right .capsule-content {
+    flex-direction: row-reverse;
+}
+
+.dock-capsule.right .menu-area {
+    right: 48px;
+    transform: scale(0.9) translateX(10px);
+}
+
+/* === 激活状态 === */
+.dock-capsule.expanded .menu-area {
     opacity: 1;
-    transform: translateX(0);
+    pointer-events: auto;
+    transform: scale(1) translateX(0);
+    transition-delay: 0.1s;
 }
 
+/* 按钮样式 */
 .menu-btn {
-    width: 28px;
-    height: 28px;
+    width: 30px;
+    height: 30px;
     border-radius: 50%;
     background: #f5f5f7;
     display: flex;
@@ -110,11 +163,12 @@ body {
     cursor: pointer;
     font-size: 14px;
     color: #666;
+    transition: all 0.2s;
 }
 
 .menu-btn:hover {
     background: #e0e0e0;
-    color: #000;
+    transform: scale(1.1);
 }
 
 .menu-btn.active {
@@ -122,8 +176,9 @@ body {
     color: white;
 }
 
+
 /* =========================================
-   2. 主侧边栏 (Main Panel) - 解决压缩问题
+   2. 主侧边栏 (Main Panel) - 你缺失的部分
    ========================================= */
 .window-frame.main-panel {
     width: 100vw;
@@ -133,6 +188,9 @@ body {
     flex-direction: column;
     box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
     border-left: 1px solid #eee;
+
+    /* 🔥 关键修复 3：确保主界面展开后能点击！ */
+    pointer-events: auto;
 }
 
 .panel-header {
@@ -144,6 +202,8 @@ body {
     padding: 0 16px;
     background: #fff;
     border-bottom: 1px solid #f0f0f0;
+    /* 允许按住顶部拖动（如果需要的话，但侧边栏通常是固定的） */
+    /* -webkit-app-region: drag; */
 }
 
 .title-text {
@@ -201,7 +261,7 @@ body {
 }
 
 /* =========================================
-   3. 设置界面适配 (解决压缩不可用)
+   3. 设置界面适配 (解决窄屏压缩不可用)
    ========================================= */
 .settings-container {
     padding: 20px;
@@ -239,21 +299,19 @@ select {
     font-size: 14px;
     outline: none;
     margin-bottom: 10px;
-    /* 增加间距 */
 }
 
 .settings-input:focus {
     border-color: #ff69b4;
 }
 
-/* 聊天气泡适配 */
+/* 聊天消息优化 */
 .chat-scroll {
     padding: 16px;
 }
 
 .message {
     max-width: 90%;
-    /* 增加气泡宽度 */
     padding: 12px 16px;
     border-radius: 12px;
     font-size: 14px;

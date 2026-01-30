@@ -15,8 +15,6 @@ use dioxus::html::HasFileData;
 use dioxus::prelude::*;
 
 use crate::components::dock_capsule::DockCapsule;
-use crate::components::title_bar::TitleBar;
-use crate::components::widget_ball::WidgetBall;
 use crate::models::WindowMode;
 use crate::services::config::load_config;
 use components::{
@@ -51,7 +49,7 @@ fn main() {
     // Create Window builder and config
     let window_builder = WindowBuilder::new()
         .with_title("Excel Agent")
-        .with_inner_size(LogicalSize::new(48.0, 56.0)) // Init is Float ball widget
+        .with_inner_size(LogicalSize::new(140.0, 56.0)) // Init is Float ball widget
         .with_decorations(false)
         .with_transparent(true)
         .with_visible(true)
@@ -88,9 +86,14 @@ fn App() -> Element {
             let screen_w = monitor.size().width as f64 / scale;
             let screen_h = monitor.size().height as f64 / scale;
 
-            // 贴右边
-            window_init
-                .set_outer_position(LogicalPosition::new(screen_w - 48.0, screen_h / 2.0 - 28.0));
+            // 放在右边屏幕边缘
+            window_init.set_outer_position(LogicalPosition::new(
+                screen_w - 140.0, // 确保胶囊贴边，左侧留白透明
+                screen_h / 2.0 - 28.0,
+            ));
+
+            // 强制聚焦，激活窗口交互
+            window_init.set_focus();
         }
     });
 
@@ -99,13 +102,11 @@ fn App() -> Element {
     use_effect(move || {
         match window_mode() {
             WindowMode::Widget => {
-                // 初始状态：小胶囊
-                // 宽度 40 (Logo + padding), 高度 60
-                window_for_effect.set_inner_size(LogicalSize::new(48.0, 56.0));
+                // 切换回 Widget 模式时，也要保持 140 宽度
+                window_for_effect.set_inner_size(LogicalSize::new(140.0, 56.0));
                 window_for_effect.set_always_on_top(true);
 
-                // TODO: 这里其实需要记忆上次是 Left 还是 Right，并恢复位置
-                // 暂时先让用户自己拖回去，或者默认吸附右边
+                window_for_effect.set_focus();
             }
             WindowMode::Main => {
                 let panel_w = 380.0;
