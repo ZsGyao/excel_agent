@@ -22,6 +22,12 @@ use components::{
 };
 use models::{ChatMessage, View};
 
+// 引入 Windows API 获取工作区 (Work Area)
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Foundation::RECT;
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPI_GETWORKAREA};
+
 fn main() {
     dioxus_logger::init(tracing::Level::INFO).expect("failed to init logger");
     services::python::init_python_env();
@@ -73,24 +79,61 @@ fn load_icon(path: &Path) -> anyhow::Result<Icon> {
     Ok(Icon::from_rgba(icon_rgba, icon_width, icon_height)?)
 }
 
+// 🔥 辅助函数：获取屏幕可用工作区（排除任务栏）
+// 返回值：(可用宽度, 可用高度, 左上角X, 左上角Y) 都是物理像素
+#[cfg(target_os = "windows")]
+fn get_work_area_rect() -> (i32, i32, i32, i32) {
+    unsafe {
+        let mut rect = std::mem::zeroed::<RECT>();
+        // SPI_GETWORKAREA 获取主显示器的工作区
+        if SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut rect as *mut _ as *mut _, 0) != 0 {
+            let width = rect.right - rect.left;
+            let height = rect.bottom - rect.top;
+            return (width, height, rect.left, rect.top);
+        }
+    }
+    // 获取失败兜底：返回一个默认大尺寸
+    (1920, 1080, 0, 0)
+}
+
 #[component]
 fn App() -> Element {
     let window = dioxus::desktop::use_window();
     let mut window_mode = use_signal(|| WindowMode::Widget);
+
+    // 记忆胶囊展开前的位置
+    // 使用 Option 是为了处理首次启动还没有记录的情况
+    let mut last_widget_pos = use_signal(|| None::<PhysicalPosition<i32>>);
+
+    // 尺寸常量
+    const CAPSULE_W: f64 = 140.0;
+    const CAPSULE_H: f64 = 56.0;
+    const CARD_W: f64 = 400.0;
+    const CARD_H: f64 = 600.0;
+    const MARGIN: f64 = 20.0;
 
     // 初始化：强制把胶囊放到屏幕右边缘 (垂直居中)
     let window_init = window.clone();
     use_effect(move || {
         if let Some(monitor) = window_init.current_monitor() {
             let scale = monitor.scale_factor();
-            let screen_w = monitor.size().width as f64 / scale;
-            let screen_h = monitor.size().height as f64 / scale;
+            // 获取工作区
+            let (work_w_phys, work_h_phys, work_x_phys, work_y_phys) = get_work_area_rect();
 
-            // 放在右边屏幕边缘
-            window_init.set_outer_position(LogicalPosition::new(
-                screen_w - 140.0, // 确保胶囊贴边，左侧留白透明
-                screen_h / 2.0 - 28.0,
-            ));
+            let work_w = work_w_phys as f64 / scale;
+            let work_h = work_h_phys as f64 / scale;
+            let work_y = work_y_phys as f64 / scale;
+
+            // 垂直居中于工作区
+            let center_y = work_y + (work_h - CAPSULE_H) / 2.0;
+            let default_x = (work_w_phys as f64 / scale) - CAPSULE_W;
+
+            window_init.set_outer_position(LogicalPosition::new(default_x, center_y));
+
+            // 记录初始位置
+            let phys_x = (default_x * scale).round() as i32;
+            let phys_y = (center_y * scale).round() as i32;
+            last_widget_pos.set(Some(PhysicalPosition::new(phys_x, phys_y)));
 
             // 强制聚焦，激活窗口交互
             window_init.set_focus();
@@ -98,43 +141,82 @@ fn App() -> Element {
     });
 
     // Dynamically adjust window size based on changes in monitoring mode
-    let window_for_effect = window.clone();
+    let window_effect = window.clone();
     use_effect(move || {
+        // 获取当前屏幕信息
+        let monitor_opt = window_effect.current_monitor();
+        if monitor_opt.is_none() {
+            return;
+        }
+        let monitor = monitor_opt.unwrap();
+        let scale = monitor.scale_factor();
+
+        // 获取工作区数据 (排除任务栏)
+        let (work_w_phys, work_h_phys, work_x_phys, work_y_phys) = get_work_area_rect();
+        let work_w = work_w_phys as f64 / scale; // 逻辑宽度
+        let work_h = work_h_phys as f64 / scale; // 逻辑高度
+        let work_top = work_y_phys as f64 / scale; // 工作区顶边 (通常是0，但如果任务栏在上面则不是)
+
         match window_mode() {
             WindowMode::Widget => {
-                // 切换回 Widget 模式时，也要保持 140 宽度
-                window_for_effect.set_inner_size(LogicalSize::new(140.0, 56.0));
-                window_for_effect.set_always_on_top(true);
+                // === 收起回胶囊 ===
+                window_effect.set_inner_size(LogicalSize::new(CAPSULE_W, CAPSULE_H));
+                window_effect.set_always_on_top(true);
 
-                window_for_effect.set_focus();
+                if let Some(pos) = last_widget_pos() {
+                    let logic_x = pos.x as f64 / scale;
+                    let logic_y = pos.y as f64 / scale;
+                    window_effect.set_outer_position(LogicalPosition::new(logic_x, logic_y));
+                } else {
+                    // 兜底回右侧居中
+                    let center_y = work_top + (work_h - CAPSULE_H) / 2.0;
+                    let default_x = (work_w_phys as f64 / scale) - CAPSULE_W;
+                    window_effect.set_outer_position(LogicalPosition::new(default_x, center_y));
+                }
+                window_effect.set_focus();
             }
             WindowMode::Main => {
-                let panel_w = 380.0;
+                // === 展开主界面 ===
+                if let Ok(current_pos) = window_effect.outer_position() {
+                    last_widget_pos.set(Some(current_pos));
 
-                if let Some(monitor) = window_for_effect.current_monitor() {
-                    let scale = monitor.scale_factor();
-                    let screen_w = monitor.size().width as f64 / scale;
-                    let screen_h = monitor.size().height as f64 / scale;
+                    let current_y_logical = current_pos.y as f64 / scale;
+                    let current_x_logical = current_pos.x as f64 / scale;
 
-                    // 获取当前位置
-                    let pos = window_for_effect
-                        .outer_position()
-                        .unwrap_or(PhysicalPosition::new(0, 0));
-                    let x = pos.x as f64 / scale;
+                    // 1. 尝试对齐胶囊顶部
+                    let mut target_y = current_y_logical;
 
-                    // 判断在那边
-                    let new_x = if x < screen_w / 2.0 {
-                        0.0
+                    // 2. 🔥 核心修复：防遮挡逻辑
+                    // 底部边界 = 工作区顶部 + 工作区高度
+                    let work_bottom = work_top + work_h;
+
+                    // 如果 (窗口位置 + 窗口高度 + 边距) 超过了 (工作区底部)
+                    if target_y + CARD_H + MARGIN > work_bottom {
+                        // 强制把窗口向上提，底边对齐工作区底部减去边距
+                        target_y = work_bottom - CARD_H - MARGIN;
+                    }
+
+                    // 顶部防越界检查
+                    if target_y < work_top + MARGIN {
+                        target_y = work_top + MARGIN;
+                    }
+
+                    // X 轴逻辑 (左侧或右侧)
+                    let screen_center_x = (work_x_phys as f64 / scale) + (work_w / 2.0);
+                    let target_x = if current_x_logical > screen_center_x {
+                        // 靠右
+                        (work_w_phys as f64 / scale) - CARD_W - MARGIN
                     } else {
-                        screen_w - panel_w
+                        // 靠左
+                        (work_x_phys as f64 / scale) + MARGIN
                     };
 
-                    // 🔥 强制：顶天立地，贴边
-                    window_for_effect.set_outer_position(LogicalPosition::new(new_x, 0.0));
-                    window_for_effect.set_inner_size(LogicalSize::new(panel_w, screen_h));
+                    window_effect.set_outer_position(LogicalPosition::new(target_x, target_y));
+                    window_effect.set_inner_size(LogicalSize::new(CARD_W, CARD_H));
                 }
-                window_for_effect.set_focus();
-                window_for_effect.set_always_on_top(true);
+
+                window_effect.set_focus();
+                window_effect.set_always_on_top(true);
             }
         }
     });

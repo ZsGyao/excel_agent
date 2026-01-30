@@ -14,10 +14,10 @@ body {
     overflow: hidden;
     font-family: "Segoe UI", sans-serif;
 
-    /* 🔥 关键修复 1：背景透明，且默认让鼠标穿透 */
+    /* 背景透明，且默认让鼠标穿透 */
     background: transparent !important;
-    pointer-events: none;
     /* 让鼠标穿过空白区域 */
+    pointer-events: none;
 }
 
 /* =========================================
