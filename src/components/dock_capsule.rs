@@ -93,7 +93,26 @@ pub fn DockCapsule(
 
     // 🔥 核心修复：组件挂载后，延迟一小会儿再开启动画
     // 这样初次渲染（从 Main 切回来时）就是瞬间完成的，不会有缩放过程
+    let window_init = window.clone();
     use_effect(move || {
+        // 初始化时检测窗口位置，决定是在左边还是右边
+        if let Some(monitor) = window_init.current_monitor() {
+            let scale = monitor.scale_factor();
+            let screen_w = monitor.size().width as f64 / scale;
+
+            // 获取当前窗口位置
+            if let Ok(pos) = window_init.outer_position() {
+                let x = pos.x as f64 / scale;
+
+                // 如果 X 坐标小于屏幕一半，说明在左边
+                if x < screen_w / 2.0 {
+                    dock_side.set(DockSide::Left);
+                } else {
+                    dock_side.set(DockSide::Right);
+                }
+            }
+        }
+
         spawn(async move {
             // 50ms 足够浏览器完成初次绘制布局了
             tokio::time::sleep(Duration::from_millis(100)).await;
