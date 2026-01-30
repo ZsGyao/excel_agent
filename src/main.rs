@@ -17,9 +17,7 @@ use dioxus::prelude::*;
 use crate::components::dock_capsule::DockCapsule;
 use crate::models::WindowMode;
 use crate::services::config::load_config;
-use components::{
-    chat_view::ChatView, input_area::InputArea, settings::Settings, sidebar::Sidebar,
-};
+use components::{chat_view::ChatView, input_area::InputArea, settings::Settings};
 use models::{ChatMessage, View};
 
 // 引入 Windows API 获取工作区 (Work Area)
@@ -55,7 +53,7 @@ fn main() {
     // Create Window builder and config
     let window_builder = WindowBuilder::new()
         .with_title("Excel Agent")
-        .with_inner_size(LogicalSize::new(120.0, 56.0)) // Init is Float ball widget
+        .with_inner_size(LogicalSize::new(130.0, 160.0)) // Init is Float ball widget
         .with_decorations(false)
         .with_transparent(true)
         .with_visible(true)
@@ -105,8 +103,8 @@ fn App() -> Element {
     // 使用 Option 是为了处理首次启动还没有记录的情况
     let mut last_widget_pos = use_signal(|| None::<PhysicalPosition<i32>>);
 
-    const CAPSULE_W: f64 = 120.0; // 尺寸定义
-    const CAPSULE_H: f64 = 56.0;
+    const CAPSULE_W: f64 = 130.0; // 尺寸定义
+    const CAPSULE_H: f64 = 160.0;
     const CARD_W: f64 = 480.0; // 聊天窗口
     const SETTINGS_W: f64 = 750.0; // 设置窗口
     const SETTINGS_H: f64 = 550.0;
@@ -119,11 +117,14 @@ fn App() -> Element {
             let scale = monitor.scale_factor();
             let (work_w_phys, work_h_phys, _, work_y_phys) = get_work_area_rect();
 
-            // 垂直居中初始化
-            let center_y =
-                (work_y_phys as f64 / scale) + (work_h_phys as f64 / scale - CAPSULE_H) / 2.0;
-            let default_x = (work_w_phys as f64 / scale) - CAPSULE_W;
+            // 这里的 CAPSULE_H 很大(160)，我们希望视觉中心(图标)在屏幕中间
+            // 图标大概在窗口顶部的 56px 区域内
+            let visual_center_offset = 28.0; // 56 / 2
 
+            let center_y = (work_y_phys as f64 / scale) + (work_h_phys as f64 / scale / 2.0)
+                - visual_center_offset;
+
+            let default_x = (work_w_phys as f64 / scale) - CAPSULE_W;
             window_init.set_outer_position(LogicalPosition::new(default_x, center_y));
             // 记录初始位置
             let phys_x = (default_x * scale).round() as i32;
@@ -268,7 +269,7 @@ fn App() -> Element {
                 Settings {
                     config,
                     // 传一个回调给 Settings 组件，让它可以切回 Chat
-                    on_close: move |_| window_mode.set(WindowMode::Main),
+                    on_close: move |_| window_mode.set(WindowMode::Widget),
                 }
             }
         } else {

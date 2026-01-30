@@ -83,7 +83,7 @@ pub fn Settings(
                 div {
                     class: "settings-close-btn",
                     onclick: move |_| on_close.call(()),
-                    "返回聊天"
+                    "返回"
                 }
             }
 
@@ -124,7 +124,7 @@ pub fn Settings(
                                                     class: "del-btn", // 需要自己在 CSS 加个简单样式或者直接用文字
                                                     style: "color: #999; font-size: 12px; padding: 4px;",
                                                     onclick: move |evt| {
-                                                        evt.stop_propagation(); // 防止触发切换
+                                                        evt.stop_propagation(); // 防止触发切换 // 防止触发切换
                                                         delete_profile(id_for_del.clone());
                                                     },
                                                     "✕"

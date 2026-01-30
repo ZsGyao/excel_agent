@@ -17,158 +17,136 @@ body {
     pointer-events: none;
 }
 
-/* 容器 */
+/* 容器：垂直排列 */
 .dock-container {
     width: 100%;
     height: 100%;
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    /* 🔥 关键：改为垂直 */
     padding: 0;
-    overflow: hidden;
+    overflow: visible;
     pointer-events: none;
 }
 
-/* === 悬浮胶囊：像一个漫画贴纸 === */
-.dock-capsule {
-    width: 48px;
-    height: 56px;
-    background: rgba(255, 255, 255, 0.90);
-    /* 微透明增加质感 */
-    backdrop-filter: blur(10px);
-    /* 毛玻璃效果 */
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-    /* 🔥 粗黑边框，匹配图标 */
-    border: 1.8px solid #000000;
+/* 左吸附靠左，右吸附靠右 */
+.dock-container.left {
+    align-items: flex-start;
+}
+
+.dock-container.right {
+    align-items: flex-end;
+}
+
+/* 包装器 */
+.dock-wrapper {
     display: flex;
+    flex-direction: column;
+    /* 让子元素水平居中对齐，这样展开时比较好看 */
     align-items: center;
-    cursor: grab;
-    overflow: hidden;
-    transition: width 0.4s cubic-bezier(0.2, 0.8, 0.2, 1),
-        border-radius 0.4s cubic-bezier(0.2, 0.8, 0.2, 1),
-        background-color 0.3s;
-    /* 弹性 */
+    gap: 8px;
+    /* 上下间距 */
     pointer-events: auto;
 }
 
-.dock-capsule.expanded {
-    width: 120px;
+/* === 1. 主胶囊 === */
+.main-capsule {
+    width: 50px;
+    /* 初始圆球 */
+    height: 50px;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(12px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+    border: 2px solid #000;
+    border-radius: 25px;
+    /* 胶囊圆角 */
+
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    cursor: grab;
+
     transition: width 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-/* 左吸附：只有右边圆角 */
-.dock-capsule.left {
-    border-radius: 0 16px 16px 0;
-    border-left: none;
-}
-
-/* 右吸附：只有左边圆角 */
-.dock-capsule.right {
-    border-radius: 16px 0 0 16px;
-    border-right: none;
-}
-
-.capsule-content {
-    display: flex;
-    align-items: center;
-    width: 100%;
-    height: 100%;
-    padding: 0 8px;
-    position: relative;
-    flex-direction: row;
-}
-
-/* 🔥 修复 2：右吸附时，内容反向排列 (图标自动跑去右边) */
-.dock-capsule.right .capsule-content {
-    flex-direction: row-reverse;
+/* 展开时变宽 */
+.dock-wrapper.expanded .main-capsule {
+    width: 120px;
 }
 
 .app-icon {
-    width: 36px;
-    height: 36px;
+    width: 40px;
+    height: 40px;
+    margin-left: 3px;
     object-fit: cover;
     flex-shrink: 0;
-    z-index: 2;
-    /* 图标本身有黑边，不需要额外装饰 */
 }
 
-/* === 微型网格菜单区 === */
-.menu-area {
-    /* 绝对定位，撑满右侧空间 */
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    margin: auto;
-    height: 44px;
-    /* 稍微留点上下边距 (56 - 44 = 12px, 上下各6px) */
-    width: 60px;
-    /* 宽度预留 */
-
-    /* 🔥 核心：2x2 网格布局 */
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    /* 两列 */
-    grid-template-rows: 1fr 1fr;
-    /* 两行 */
-    gap: 4px;
-    /* 按钮间距 */
-
+/* 聊天文字 */
+.primary-action {
+    white-space: nowrap;
+    font-weight: 800;
+    font-size: 14px;
+    margin-left: 10px;
     opacity: 0;
-    pointer-events: none;
-    transform: scale(0.8) translateX(-10px);
-    transition: all 0.2s ease;
+    cursor: pointer;
+    transition: opacity 0.2s ease;
 }
 
-/* 左吸附：菜单在图标右侧 */
-.dock-capsule.left .menu-area {
-    left: 52px;
-    /* 初始状态稍微往左缩一点，展开时滑出来 */
-    transform: scale(0.8) translateX(-10px);
-}
-
-/* 🔥 修复 3：右吸附：菜单在图标左侧 */
-.dock-capsule.right .menu-area {
-    right: 52px;
-    /* 初始状态稍微往右缩一点 (translateX 正数)，展开时滑出来 */
-    /* 注意：之前这里可能是位移太大导致挤到了图标，现在调小一点 */
-    transform: scale(0.8) translateX(5px);
-}
-
-/* 展开状态：显示并归位 */
-.dock-capsule.expanded .menu-area {
+.dock-wrapper.expanded .primary-action {
     opacity: 1;
-    pointer-events: auto;
-    /* 归位到 0，不仅不挤图标，动画也更自然 */
-    transform: scale(1) translateX(0);
     transition-delay: 0.1s;
 }
 
-/* === 微型网格按钮 === */
+/* === 2. 下方网格 === */
+.secondary-grid {
+    /* 默认：高度0，透明，向上缩进 */
+    height: 0;
+    opacity: 0;
+    transform: translateY(-10px);
+
+    display: flex;
+    gap: 8px;
+    /* 按钮横向间距 */
+
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    pointer-events: none;
+}
+
+/* 展开状态 */
+.dock-wrapper.expanded .secondary-grid {
+    height: 40px;
+    /* 撑开高度 */
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+    transition-delay: 0.1s;
+    /* 稍晚于主胶囊展开 */
+}
+
+/* 网格内的小按钮 */
 .grid-btn {
-    /* 尺寸自动填充网格 */
-    width: 100%;
-    height: 100%;
-    background: #F3F4F6;
-    border-radius: 6px;
-    /* 小圆角 */
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: #fff;
+    border: 2px solid #eee;
+    color: #555;
+
     display: flex;
     align-items: center;
     justify-content: center;
+    font-size: 14px;
     cursor: pointer;
-    font-size: 12px;
-    /* 图标小一点 */
-    color: #4B5563;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
     transition: all 0.2s;
-    border: 1px solid transparent;
 }
 
 .grid-btn:hover {
+    border-color: #000;
     background: #000;
     color: #fff;
     transform: scale(1.1);
-    /* 悬停微放大 */
-    z-index: 10;
-    /* 放大时浮在最上层 */
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
 }
 
 .grid-btn.active {
@@ -177,13 +155,8 @@ body {
     border-color: #000;
 }
 
-/* 针对不同按钮的微调 (可选) */
-.grid-btn.chat {
-    font-size: 13px;
-}
-
 .grid-btn.more {
-    color: #9CA3AF;
+    color: #ccc;
 }
 
 /* 更多按钮淡一点 */
