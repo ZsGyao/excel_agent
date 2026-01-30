@@ -207,7 +207,7 @@ pub fn DockCapsule(
             return;
         }
         let task = spawn(async move {
-            tokio::time::sleep(Duration::from_millis(300)).await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
             is_hovering.set(false);
         });
         debounce_task.set(Some(task));

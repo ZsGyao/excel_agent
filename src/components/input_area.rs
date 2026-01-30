@@ -263,19 +263,21 @@ pub fn InputArea(
     };
 
     rsx! {
-        div { class: "input-section",
+        div { class: "input-container",
             input {
+                class: "chat-input",
                 placeholder: "输入需求...",
                 value: "{input_text}",
                 oninput: move |evt| input_text.set(evt.value()),
                 disabled: is_loading(),
-                onkeydown: move |evt| { if evt.key() == Key::Enter { handle_send(); } }
-            },
-            button {
-                class: "btn-send",
-                onclick: move |_| handle_send(),
-                "发送"
+                onkeydown: move |evt| {
+                    if evt.key() == Key::Enter && !evt.modifiers().contains(Modifiers::SHIFT) {
+                        evt.prevent_default();
+                        handle_send();
+                    }
+                },
             }
+            button { class: "send-btn", onclick: move |_| handle_send(), "发送" }
         }
     }
 }

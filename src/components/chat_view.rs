@@ -1,6 +1,8 @@
 use crate::components::data_table::DataTable;
 use crate::models::{ActionStatus, ChatMessage}; // ✅ 引入 ActionStatus
-use crate::services::python; // ✅ 引入 python 服务
+use crate::services::python;
+use dioxus::document::eval;
+// ✅ 引入 python 服务
 use dioxus::prelude::*;
 use tokio::task; // ✅ 引入 task
 
@@ -36,6 +38,26 @@ pub fn ChatView(messages: Signal<Vec<ChatMessage>>, last_file_path: Signal<Strin
             }
         });
     };
+
+    // 每次 messages 变化时，JS 脚本会把 .chat-scroll 滚动条拉到底
+    use_effect(move || {
+        // 依赖 messages 变化
+        let _ = messages.read().len();
+
+        // 延时一点点执行，确保 DOM 已经渲染
+        spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let eval = eval(
+                r#"
+                var element = document.querySelector('.chat-scroll');
+                if (element) {
+                    element.scrollTop = element.scrollHeight;
+                }
+            "#,
+            );
+            let _ = eval.await;
+        });
+    });
 
     rsx! {
         div { class: "chat-scroll",

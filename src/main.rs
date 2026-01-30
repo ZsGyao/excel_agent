@@ -108,28 +108,22 @@ fn App() -> Element {
     // 尺寸常量
     const CAPSULE_W: f64 = 140.0;
     const CAPSULE_H: f64 = 56.0;
-    const CARD_W: f64 = 400.0;
-    const CARD_H: f64 = 600.0;
-    const MARGIN: f64 = 20.0;
+    const CARD_W: f64 = 480.0;
+    const MARGIN: f64 = 60.0;
 
     // 初始化：强制把胶囊放到屏幕右边缘 (垂直居中)
     let window_init = window.clone();
     use_effect(move || {
         if let Some(monitor) = window_init.current_monitor() {
             let scale = monitor.scale_factor();
-            // 获取工作区
-            let (work_w_phys, work_h_phys, work_x_phys, work_y_phys) = get_work_area_rect();
+            let (work_w_phys, work_h_phys, _, work_y_phys) = get_work_area_rect();
 
-            let work_w = work_w_phys as f64 / scale;
-            let work_h = work_h_phys as f64 / scale;
-            let work_y = work_y_phys as f64 / scale;
-
-            // 垂直居中于工作区
-            let center_y = work_y + (work_h - CAPSULE_H) / 2.0;
+            // 垂直居中初始化
+            let center_y =
+                (work_y_phys as f64 / scale) + (work_h_phys as f64 / scale - CAPSULE_H) / 2.0;
             let default_x = (work_w_phys as f64 / scale) - CAPSULE_W;
 
             window_init.set_outer_position(LogicalPosition::new(default_x, center_y));
-
             // 记录初始位置
             let phys_x = (default_x * scale).round() as i32;
             let phys_y = (center_y * scale).round() as i32;
@@ -176,32 +170,18 @@ fn App() -> Element {
                 window_effect.set_focus();
             }
             WindowMode::Main => {
-                // === 展开主界面 ===
+                // === 展开 ===
                 if let Ok(current_pos) = window_effect.outer_position() {
                     last_widget_pos.set(Some(current_pos));
-
-                    let current_y_logical = current_pos.y as f64 / scale;
                     let current_x_logical = current_pos.x as f64 / scale;
 
-                    // 1. 尝试对齐胶囊顶部
-                    let mut target_y = current_y_logical;
+                    // 🔥 核心逻辑：高度自动填满
+                    // 高度 = 工作区高度 - 上下边距
+                    let target_h = work_h - (MARGIN * 2.0);
+                    // Y坐标 = 工作区顶部 + 边距
+                    let target_y = work_top + MARGIN;
 
-                    // 2. 🔥 核心修复：防遮挡逻辑
-                    // 底部边界 = 工作区顶部 + 工作区高度
-                    let work_bottom = work_top + work_h;
-
-                    // 如果 (窗口位置 + 窗口高度 + 边距) 超过了 (工作区底部)
-                    if target_y + CARD_H + MARGIN > work_bottom {
-                        // 强制把窗口向上提，底边对齐工作区底部减去边距
-                        target_y = work_bottom - CARD_H - MARGIN;
-                    }
-
-                    // 顶部防越界检查
-                    if target_y < work_top + MARGIN {
-                        target_y = work_top + MARGIN;
-                    }
-
-                    // X 轴逻辑 (左侧或右侧)
+                    // X坐标：判断靠左还是靠右
                     let screen_center_x = (work_x_phys as f64 / scale) + (work_w / 2.0);
                     let target_x = if current_x_logical > screen_center_x {
                         // 靠右
@@ -212,7 +192,8 @@ fn App() -> Element {
                     };
 
                     window_effect.set_outer_position(LogicalPosition::new(target_x, target_y));
-                    window_effect.set_inner_size(LogicalSize::new(CARD_W, CARD_H));
+                    // 🔥 设置动态计算出的高度
+                    window_effect.set_inner_size(LogicalSize::new(CARD_W, target_h));
                 }
 
                 window_effect.set_focus();
