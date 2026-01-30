@@ -210,7 +210,7 @@ pub fn DockCapsule(
 
     // 🔥 wrapper_cls 控制整体展开
     let wrapper_cls = format!(
-        "dock-wrapper {} {}",
+        "dock-capsule {} {}",
         if is_hovering() { "expanded" } else { "" },
         if !anim_ready() { "no-anim" } else { "" }
     );
@@ -218,9 +218,10 @@ pub fn DockCapsule(
     rsx! {
         div {
             class: "{container_cls}",
-            // 垂直对齐：左吸附靠左，右吸附靠右
+            // 垂直布局对齐：左吸附靠左，右吸附靠右
             style: if dock_side() == DockSide::Right { "align-items: flex-end;" } else { "align-items: flex-start;" },
 
+            // 🔥 核心结构变化：外层是 dock-capsule (transparent wrapper)
             div { class: "{wrapper_cls}", onmouseleave: handle_leave,
 
                 // === 1. 上层：主胶囊 (图标 + 文字) ===
@@ -274,7 +275,7 @@ pub fn DockCapsule(
                         },
                         "📌"
                     }
-                    // 更多
+                    // 更多 (占位)
                     div { class: "grid-btn more", "…" }
                 }
             }

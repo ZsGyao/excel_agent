@@ -119,7 +119,7 @@ fn App() -> Element {
 
             // 这里的 CAPSULE_H 很大(160)，我们希望视觉中心(图标)在屏幕中间
             // 图标大概在窗口顶部的 56px 区域内
-            let visual_center_offset = 28.0; // 56 / 2
+            let visual_center_offset = 25.0; // 56 / 2
 
             let center_y = (work_y_phys as f64 / scale) + (work_h_phys as f64 / scale / 2.0)
                 - visual_center_offset;
