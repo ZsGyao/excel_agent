@@ -88,7 +88,7 @@ pub fn DockCapsule(
     // 默认为 false，这会给组件加上 .no-anim 类，禁止一切过渡效果
     let mut anim_ready = use_signal(|| false);
 
-    const EXPANDED_W: f64 = 140.0;
+    const EXPANDED_W: f64 = 120.0;
     const EXPANDED_H: f64 = 56.0;
 
     // 🔥 核心修复：组件挂载后，延迟一小会儿再开启动画
@@ -283,17 +283,12 @@ pub fn DockCapsule(
                         draggable: false,
                     }
 
+                    // 🔥 菜单区域
                     div { class: "menu-area",
+                        // 按钮 1: 聊天 (左上)
                         div {
-                            class: if is_pinned() { "menu-btn active" } else { "menu-btn" },
-                            onclick: move |evt| {
-                                evt.stop_propagation();
-                                is_pinned.set(!is_pinned());
-                            },
-                            "📌"
-                        }
-                        div {
-                            class: "menu-btn",
+                            class: "grid-btn chat",
+                            title: "聊天",
                             onclick: move |evt| {
                                 evt.stop_propagation();
                                 if let Some(task) = debounce_task.write().take() {
@@ -302,6 +297,37 @@ pub fn DockCapsule(
                                 window_mode.set(WindowMode::Main);
                             },
                             "💬"
+                        }
+
+                        // 按钮 2: 设置 (右上)
+                        div {
+                            class: "grid-btn settings",
+                            title: "配置",
+                            onclick: move |evt| {
+                                evt.stop_propagation();
+                                if let Some(task) = debounce_task.write().take() {
+                                    task.cancel();
+                                }
+                                window_mode.set(WindowMode::Settings);
+                            },
+                            "⚙️"
+                        }
+
+                        // 按钮 3: 置顶 (左下)
+                        div {
+                            class: if is_pinned() { "grid-btn pin active" } else { "grid-btn pin" },
+                            title: "置顶",
+                            onclick: move |evt| {
+                                evt.stop_propagation();
+                                is_pinned.set(!is_pinned());
+                            },
+                            "📌"
+                        }
+
+                        // 按钮 4: 预留/占位 (右下) - 比如未来放 "历史记录"
+                        div { class: "grid-btn more", title: "更多",
+                            // 暂时没功能，放个点点点
+                            "…"
                         }
                     }
                 }

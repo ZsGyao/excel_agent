@@ -55,7 +55,7 @@ fn main() {
     // Create Window builder and config
     let window_builder = WindowBuilder::new()
         .with_title("Excel Agent")
-        .with_inner_size(LogicalSize::new(140.0, 56.0)) // Init is Float ball widget
+        .with_inner_size(LogicalSize::new(120.0, 56.0)) // Init is Float ball widget
         .with_decorations(false)
         .with_transparent(true)
         .with_visible(true)
@@ -105,7 +105,7 @@ fn App() -> Element {
     // 使用 Option 是为了处理首次启动还没有记录的情况
     let mut last_widget_pos = use_signal(|| None::<PhysicalPosition<i32>>);
 
-    const CAPSULE_W: f64 = 140.0; // 尺寸定义
+    const CAPSULE_W: f64 = 120.0; // 尺寸定义
     const CAPSULE_H: f64 = 56.0;
     const CARD_W: f64 = 480.0; // 聊天窗口
     const SETTINGS_W: f64 = 750.0; // 设置窗口
