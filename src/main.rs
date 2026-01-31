@@ -20,7 +20,6 @@ use crate::services::config::load_config;
 use components::{chat_view::ChatView, input_area::InputArea, settings::Settings};
 use models::{ChatMessage, View};
 
-// 引入 Windows API 获取工作区 (Work Area)
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Foundation::RECT;
 #[cfg(target_os = "windows")]
@@ -33,40 +32,35 @@ fn main() {
     let icon_path = "assets/icon.png";
     let icon = load_icon(Path::new(icon_path));
 
-    // Create system tray, use Box::leak to keep trap alive during program runtime
     let _tray = match icon {
-        Ok(i) => {
-            Some(Box::leak(Box::new(
-                TrayIconBuilder::new()
-                    .with_tooltip("Excel AI Agent") // Show text when mouse hover
-                    .with_icon(i)
-                    .build()
-                    .unwrap(),
-            )))
-        }
+        Ok(i) => Some(Box::leak(Box::new(
+            TrayIconBuilder::new()
+                .with_tooltip("Excel AI Agent")
+                .with_icon(i)
+                .build()
+                .unwrap(),
+        ))),
         Err(_) => {
             println!("⚠️ 警告：找不到 assets/icon.png，托盘图标加载失败");
             None
         }
     };
 
-    // Create Window builder and config
     let window_builder = WindowBuilder::new()
         .with_title("Excel Agent")
-        .with_inner_size(LogicalSize::new(130.0, 160.0)) // Init is Float ball widget
+        .with_inner_size(LogicalSize::new(130.0, 160.0))
         .with_decorations(false)
         .with_transparent(true)
-        .with_visible(true)
+        .with_visible(false) // 初始隐藏，防止白屏
         .with_undecorated_shadow(false)
-        .with_skip_taskbar(true) // Hide from the taskbar
-        .with_always_on_top(true); // Float ball always on the top
+        .with_skip_taskbar(true)
+        .with_always_on_top(true);
 
     let config = Config::new().with_window(window_builder);
 
     LaunchBuilder::desktop().with_cfg(config).launch(App);
 }
 
-/// Read Png and transform to Icon
 fn load_icon(path: &Path) -> anyhow::Result<Icon> {
     let (icon_rgba, icon_width, icon_height) = {
         let image = image::open(path)?.into_rgba8();
@@ -77,20 +71,16 @@ fn load_icon(path: &Path) -> anyhow::Result<Icon> {
     Ok(Icon::from_rgba(icon_rgba, icon_width, icon_height)?)
 }
 
-// 🔥 辅助函数：获取屏幕可用工作区（排除任务栏）
-// 返回值：(可用宽度, 可用高度, 左上角X, 左上角Y) 都是物理像素
 #[cfg(target_os = "windows")]
 fn get_work_area_rect() -> (i32, i32, i32, i32) {
     unsafe {
         let mut rect = std::mem::zeroed::<RECT>();
-        // SPI_GETWORKAREA 获取主显示器的工作区
         if SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut rect as *mut _ as *mut _, 0) != 0 {
             let width = rect.right - rect.left;
             let height = rect.bottom - rect.top;
             return (width, height, rect.left, rect.top);
         }
     }
-    // 获取失败兜底：返回一个默认大尺寸
     (1920, 1080, 0, 0)
 }
 
@@ -98,64 +88,60 @@ fn get_work_area_rect() -> (i32, i32, i32, i32) {
 fn App() -> Element {
     let window = dioxus::desktop::use_window();
     let mut window_mode = use_signal(|| WindowMode::Widget);
-
-    // 记忆胶囊展开前的位置
-    // 使用 Option 是为了处理首次启动还没有记录的情况
     let mut last_widget_pos = use_signal(|| None::<PhysicalPosition<i32>>);
 
-    const CAPSULE_W: f64 = 130.0; // 尺寸定义
+    const CAPSULE_W: f64 = 130.0;
     const CAPSULE_H: f64 = 160.0;
-    const CARD_W: f64 = 480.0; // 聊天窗口
-    const SETTINGS_W: f64 = 750.0; // 设置窗口
+    const CARD_W: f64 = 480.0;
+    const SETTINGS_W: f64 = 750.0;
     const SETTINGS_H: f64 = 550.0;
-    const MARGIN: f64 = 60.0; // 上下边距距离
+    const MARGIN: f64 = 60.0;
 
-    // 初始化：强制把胶囊放到屏幕右边缘 (垂直居中)
+    // 初始化定位
     let window_init = window.clone();
     use_effect(move || {
         if let Some(monitor) = window_init.current_monitor() {
             let scale = monitor.scale_factor();
             let (work_w_phys, work_h_phys, _, work_y_phys) = get_work_area_rect();
 
-            // 这里的 CAPSULE_H 很大(160)，我们希望视觉中心(图标)在屏幕中间
-            // 图标大概在窗口顶部的 56px 区域内
-            let visual_center_offset = 25.0; // 56 / 2
-
+            let visual_center_offset = 25.0;
             let center_y = (work_y_phys as f64 / scale) + (work_h_phys as f64 / scale / 2.0)
                 - visual_center_offset;
-
             let default_x = (work_w_phys as f64 / scale) - CAPSULE_W;
+
             window_init.set_outer_position(LogicalPosition::new(default_x, center_y));
-            // 记录初始位置
+
             let phys_x = (default_x * scale).round() as i32;
             let phys_y = (center_y * scale).round() as i32;
             last_widget_pos.set(Some(PhysicalPosition::new(phys_x, phys_y)));
 
-            // 强制聚焦，激活窗口交互
+            window_init.set_visible(true);
             window_init.set_focus();
         }
     });
 
-    // Dynamically adjust window size based on changes in monitoring mode
+    // 核心：监听模式变化，调整窗口物理属性
     let window_effect = window.clone();
     use_effect(move || {
-        // 获取当前屏幕信息
+        // 读取信号，建立依赖
+        let mode = window_mode();
+
         let monitor_opt = window_effect.current_monitor();
         if monitor_opt.is_none() {
             return;
         }
         let monitor = monitor_opt.unwrap();
         let scale = monitor.scale_factor();
-
-        // 获取工作区数据 (排除任务栏)
         let (work_w_phys, work_h_phys, work_x_phys, work_y_phys) = get_work_area_rect();
-        let work_w = work_w_phys as f64 / scale; // 逻辑宽度
-        let work_h = work_h_phys as f64 / scale; // 逻辑高度
-        let work_top = work_y_phys as f64 / scale; // 工作区顶边 (通常是0，但如果任务栏在上面则不是)
+        let work_w = work_w_phys as f64 / scale;
+        let work_h = work_h_phys as f64 / scale;
+        let work_top = work_y_phys as f64 / scale;
 
-        match window_mode() {
+        // 再次强制隐藏，确保万无一失
+        window_effect.set_visible(false);
+
+        match mode {
             WindowMode::Widget => {
-                // === 收起回胶囊 ===
                 window_effect.set_inner_size(LogicalSize::new(CAPSULE_W, CAPSULE_H));
                 window_effect.set_always_on_top(true);
 
@@ -164,76 +150,62 @@ fn App() -> Element {
                     let logic_y = pos.y as f64 / scale;
                     window_effect.set_outer_position(LogicalPosition::new(logic_x, logic_y));
                 } else {
-                    // 兜底回右侧居中
                     let center_y = work_top + (work_h - CAPSULE_H) / 2.0;
                     let default_x = (work_w_phys as f64 / scale) - CAPSULE_W;
                     window_effect.set_outer_position(LogicalPosition::new(default_x, center_y));
                 }
-                window_effect.set_focus();
             }
             WindowMode::Main => {
-                // === 展开 ===
                 if let Ok(current_pos) = window_effect.outer_position() {
-                    last_widget_pos.set(Some(current_pos));
-                    let current_x_logical = current_pos.x as f64 / scale;
-
-                    // 🔥 核心逻辑：高度自动填满
-                    // 高度 = 工作区高度 - 上下边距
+                    if window_effect.inner_size().width < 200 {
+                        last_widget_pos.set(Some(current_pos));
+                    }
+                    let anchor_pos = last_widget_pos().unwrap_or(current_pos);
+                    let anchor_x = anchor_pos.x as f64 / scale;
                     let target_h = work_h - (MARGIN * 2.0);
-                    // Y坐标 = 工作区顶部 + 边距
                     let target_y = work_top + MARGIN;
-
-                    // X坐标：判断靠左还是靠右
                     let screen_center_x = (work_x_phys as f64 / scale) + (work_w / 2.0);
-                    let target_x = if current_x_logical > screen_center_x {
-                        // 靠右
+                    let target_x = if anchor_x > screen_center_x {
                         (work_w_phys as f64 / scale) - CARD_W - MARGIN
                     } else {
-                        // 靠左
                         (work_x_phys as f64 / scale) + MARGIN
                     };
-
                     window_effect.set_outer_position(LogicalPosition::new(target_x, target_y));
-                    // 🔥 设置动态计算出的高度
                     window_effect.set_inner_size(LogicalSize::new(CARD_W, target_h));
                 }
-
-                window_effect.set_focus();
                 window_effect.set_always_on_top(true);
             }
             WindowMode::Settings => {
-                // 设置模式下，我们把它放在屏幕正中间，取消置顶，方便操作
                 let center_x = (work_x_phys as f64 / scale) + (work_w - SETTINGS_W) / 2.0;
                 let center_y = work_top + (work_h - SETTINGS_H) / 2.0;
-
                 window_effect.set_inner_size(LogicalSize::new(SETTINGS_W, SETTINGS_H));
                 window_effect.set_outer_position(LogicalPosition::new(center_x, center_y));
-
-                // 设置界面通常不需要一直置顶，或者你可以根据喜好保留
                 window_effect.set_always_on_top(false);
             }
         }
+
+        // 延迟显示：这是防闪烁的第二道防线
+        let window_show = window_effect.clone();
+        spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            window_show.set_visible(true);
+            window_show.set_focus();
+        });
     });
 
-    // Listen tray click envet, Use use_future start async task
+    // 修复托盘逻辑报错
+    let window_tray = window.clone();
     use_future(move || {
-        // Get window handle to control show/hide
-        let window = window.clone();
+        let window = window_tray.clone(); // 🔥 修复 E0507: 在这里 clone
         async move {
             let receiver = TrayIconEvent::receiver();
-
             loop {
-                // Use try_recv to check event unblocking
                 if let Ok(event) = receiver.try_recv() {
-                    // if is click event
                     if let TrayIconEvent::Click { .. } = event {
-                        println!("托盘图标被点击！");
-                        window.set_visible(true);
-                        window.set_focus();
+                        window.set_visible(false);
                         window_mode.set(WindowMode::Main);
                     }
                 }
-                // Sleep a while, avoid loop use 100% CPU
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
         }
@@ -251,12 +223,15 @@ fn App() -> Element {
             image: None,
         }]
     });
-
     let config = use_signal(|| load_config());
-
     let mut last_file_path = use_signal(|| String::new());
     let mut is_dragging = use_signal(|| false);
     let is_loading = use_signal(|| false);
+
+    // 为按钮事件准备的 Window Clone
+    let window_close_settings = window.clone();
+    let window_to_settings = window.clone();
+    let window_to_widget = window.clone();
 
     rsx! {
         document::Stylesheet { href: asset!("/assets/main.css") }
@@ -264,38 +239,60 @@ fn App() -> Element {
         if window_mode() == WindowMode::Widget {
             DockCapsule { window_mode, messages, last_file_path }
         } else if window_mode() == WindowMode::Settings {
-            // 🔥 独立的设置界面容器
-            div { class: "window-frame settings-panel",
+            div {
+                class: "window-frame settings-panel",
+                oncontextmenu: move |evt| evt.prevent_default(),
                 Settings {
                     config,
-                    // 传一个回调给 Settings 组件，让它可以切回 Chat
-                    on_close: move |_| window_mode.set(WindowMode::Widget),
+                    // 🔥 策略核心：先隐藏 -> 等50ms -> 再切换状态
+                    on_close: move |_| {
+                        let win = window_close_settings.clone();
+                        win.set_visible(false); // 1. 马上消失
+                        spawn(async move {
+                            tokio::time::sleep(Duration::from_millis(50)).await; // 2. 给系统喘息时间
+                            window_mode.set(WindowMode::Widget); // 3. 切换状态（此时窗口是隐藏的）
+                        });
+                    },
                 }
             }
         } else {
-            // Main 面板
-            div { class: "window-frame main-panel",
-                // Header
+            div {
+                class: "window-frame main-panel",
+                oncontextmenu: move |evt| evt.prevent_default(),
+
                 div { class: "panel-header",
                     div { class: "title-text", "Excel AI Agent" }
-                    // 只是收起，不关闭
-                    // 设置按钮
+                    // 切换到设置
                     div {
                         class: "icon-btn",
                         title: "设置",
-                        onclick: move |_| window_mode.set(WindowMode::Settings),
+                        onclick: move |_| {
+                            let win = window_to_settings.clone();
+                            win.set_visible(false);
+                            spawn(async move {
+                                tokio::time::sleep(Duration::from_millis(50)).await;
+                                window_mode.set(WindowMode::Settings);
+                            });
+                        },
                         "⚙️"
                     }
+                    // 最小化到 Widget
                     div {
                         style: "cursor: pointer; padding: 5px;",
-                        onclick: move |_| window_mode.set(WindowMode::Widget),
+                        onclick: move |_| {
+                            let win = window_to_widget.clone();
+                            win.set_visible(false);
+                            spawn(async move {
+                                tokio::time::sleep(Duration::from_millis(50)).await;
+                                window_mode.set(WindowMode::Widget);
+                            });
+                        },
                         "⏬"
                     }
                 }
 
                 div {
                     class: "app-container",
-                    // 拖拽文件逻辑 (保持不变)
                     ondragover: move |evt| {
                         evt.prevent_default();
                         if !is_dragging() {
@@ -310,14 +307,13 @@ fn App() -> Element {
                         evt.prevent_default();
                         is_dragging.set(false);
                         let files = evt.data().files();
-                        if let Some(first_file) = files.first() {} // ... 之前的逻辑 ...
+                        if let Some(first_file) = files.first() {}
                     },
 
                     div { class: "content-area",
                         if is_dragging() {
                             div { class: "drag-overlay", "📂 投喂 Excel！" }
                         }
-
                         ChatView { messages, last_file_path }
                         InputArea {
                             messages,
@@ -325,7 +321,6 @@ fn App() -> Element {
                             is_loading,
                             config,
                         }
-
                     }
                 }
             }

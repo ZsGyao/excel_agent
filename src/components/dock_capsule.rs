@@ -7,7 +7,7 @@ use dioxus::{
         DesktopContext,
     },
     hooks::use_signal,
-    html::{InteractionLocation, MouseData},
+    html::{HasFileData, InteractionLocation, MouseData},
     prelude::*,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -79,11 +79,9 @@ pub fn DockCapsule(
     let mut debounce_task = use_signal(|| None::<Task>);
     let mut anim_ready = use_signal(|| false);
 
-    // 🔥 必须与 main.rs 一致
     const EXPANDED_W: f64 = 130.0;
     const EXPANDED_H: f64 = 160.0;
 
-    // 初始化位置检测
     let window_init = window.clone();
     use_effect(move || {
         if let Some(monitor) = window_init.current_monitor() {
@@ -99,12 +97,11 @@ pub fn DockCapsule(
             }
         }
         spawn(async move {
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(150)).await;
             anim_ready.set(true);
         });
     });
 
-    // 拖拽逻辑
     let window_drag_loop = window.clone();
     use_effect(move || {
         if is_dragging() {
@@ -199,6 +196,46 @@ pub fn DockCapsule(
         debounce_task.set(Some(task));
     };
 
+    let handle_drag_over = move |evt: Event<DragData>| {
+        evt.prevent_default();
+        evt.stop_propagation();
+    };
+
+    let window_drop = window.clone();
+    let handle_drop = move |evt: Event<DragData>| {
+        evt.prevent_default();
+        evt.stop_propagation();
+        let files = evt.data().files();
+        if let Some(first_file) = files.first() {
+            let file_name = first_file.name();
+            let current_dir = std::env::current_dir().unwrap_or_default();
+            let full_path = current_dir
+                .join(&file_name)
+                .to_str()
+                .unwrap_or_default()
+                .to_string();
+            last_file_path.set(full_path);
+            let new_msg_id = messages.read().len();
+            messages.write().push(ChatMessage {
+                id: new_msg_id,
+                text: format!("📄 收到文件: {}", file_name),
+                is_user: false,
+                table: None,
+                temp_id: None,
+                status: crate::models::ActionStatus::None,
+                image: None,
+            });
+
+            // 🔥 策略核心：拖拽跳转也要等待
+            let win = window_drop.clone();
+            win.set_visible(false);
+            spawn(async move {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                window_mode.set(WindowMode::Main);
+            });
+        }
+    };
+
     let container_cls = format!(
         "dock-container {}",
         if dock_side() == DockSide::Left {
@@ -207,36 +244,45 @@ pub fn DockCapsule(
             "right"
         }
     );
-
-    // 🔥 wrapper_cls 控制整体展开
     let wrapper_cls = format!(
-        "dock-capsule {} {}",
+        "dock-wrapper {} {}",
         if is_hovering() { "expanded" } else { "" },
         if !anim_ready() { "no-anim" } else { "" }
     );
+    let visibility_style = if anim_ready() {
+        "opacity: 1;"
+    } else {
+        "opacity: 0;"
+    };
+    let align_style = if dock_side() == DockSide::Right {
+        "align-items: flex-end;"
+    } else {
+        "align-items: flex-start;"
+    };
+
+    let window_chat = window.clone();
+    let window_settings = window.clone();
 
     rsx! {
         div {
             class: "{container_cls}",
-            // 垂直布局对齐：左吸附靠左，右吸附靠右
-            style: if dock_side() == DockSide::Right { "align-items: flex-end;" } else { "align-items: flex-start;" },
+            style: "{visibility_style} {align_style}",
+            div {
+                class: "{wrapper_cls}",
+                onmouseleave: handle_leave,
+                ondragover: handle_drag_over,
+                ondrop: handle_drop,
+                oncontextmenu: move |evt| evt.prevent_default(),
 
-            // 🔥 核心结构变化：外层是 dock-capsule (transparent wrapper)
-            div { class: "{wrapper_cls}", onmouseleave: handle_leave,
-
-                // === 1. 上层：主胶囊 (图标 + 文字) ===
                 div {
                     class: "main-capsule",
                     onmousedown: handle_mouse_down,
                     onmouseenter: handle_enter,
-
                     img {
                         class: "app-icon",
                         src: asset!("assets/icon.png"),
                         draggable: false,
                     }
-
-                    // 文字按钮：点击去聊天
                     div {
                         class: "primary-action",
                         onclick: move |evt| {
@@ -244,15 +290,23 @@ pub fn DockCapsule(
                             if let Some(task) = debounce_task.write().take() {
                                 task.cancel();
                             }
-                            window_mode.set(WindowMode::Main);
+                            let win = window_chat.clone();
+                            win.set_visible(false);
+                            spawn(async move {
+                                tokio::time::sleep(Duration::from_millis(50)).await;
+                                window_mode.set(WindowMode::Main);
+                            });
                         },
-                        "💬 Chat"
+                        span { "聊天" }
+                        img {
+                            class: "chat-icon",
+                            src: asset!("assets/chat.png"),
+                            draggable: false,
+                        }
                     }
                 }
 
-                // === 2. 下层：功能网格 (向下滑出) ===
                 div { class: "secondary-grid",
-                    // 设置
                     div {
                         class: "grid-btn settings",
                         title: "配置",
@@ -261,11 +315,19 @@ pub fn DockCapsule(
                             if let Some(task) = debounce_task.write().take() {
                                 task.cancel();
                             }
-                            window_mode.set(WindowMode::Settings);
+                            let win = window_settings.clone();
+                            win.set_visible(false);
+                            spawn(async move {
+                                tokio::time::sleep(Duration::from_millis(50)).await;
+                                window_mode.set(WindowMode::Settings);
+                            });
                         },
-                        "⚙️"
+                        img {
+                            class: "menu-icon",
+                            src: asset!("assets/settings.png"),
+                            draggable: false,
+                        }
                     }
-                    // 置顶
                     div {
                         class: if is_pinned() { "grid-btn pin active" } else { "grid-btn pin" },
                         title: "置顶",
@@ -273,9 +335,12 @@ pub fn DockCapsule(
                             evt.stop_propagation();
                             is_pinned.set(!is_pinned());
                         },
-                        "📌"
+                        img {
+                            class: "menu-icon",
+                            src: if is_pinned() { asset!("assets/pin_active.png") } else { asset!("assets/pin.png") },
+                            draggable: false,
+                        }
                     }
-                    // 更多 (占位)
                     div { class: "grid-btn more", "…" }
                 }
             }

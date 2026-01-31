@@ -39,21 +39,19 @@ body {
 }
 
 /* 2. 交互包装器 (rust里的 dock-capsule div) */
-.dock-capsule {
+.dock-wrapper {
     display: flex;
     flex-direction: column;
-    /* 也是垂直的 */
     align-items: center;
-    /* 居中对齐子元素 */
     gap: 8px;
     /* 上下间距 */
 
-    /* 自身不设宽高，由内容撑开 */
-    width: auto !important;
-    height: auto !important;
+    /* 核心：不设固定宽高，由内容撑开 */
+    width: auto;
+    height: auto;
 
+    /* 核心：必须开启交互，否则无法点击和拖拽 */
     pointer-events: auto;
-    /* 开启点击 */
 }
 
 /* === 3. 上层：主胶囊 (图标 + 聊天) === */
@@ -77,7 +75,7 @@ body {
 }
 
 /* 展开时变宽 */
-.dock-capsule.expanded .main-capsule {
+.dock-wrapper.expanded .main-capsule {
     width: 130px;
 }
 
@@ -91,18 +89,50 @@ body {
 
 /* 聊天文字 */
 .primary-action {
+    /* 🔥 1. 布局：设为 Flex 容器，让图标和文字横向排列 */
+    display: flex;
+    align-items: center;
+    /* 垂直居中 */
+    justify-content: center;
+    gap: 6px;
+    /* 🔥 图标和文字之间的间距 (神器，自动处理左右间距) */
+
+    /* 字体样式 */
     white-space: nowrap;
     font-weight: 800;
     font-size: 14px;
-    margin-left: 10px;
+    color: #333;
+
+    /* 布局位置 */
+    margin-left: 12px;
+    /* 离主猫爪图标的距离 */
+
+    /* 动画 */
     opacity: 0;
     cursor: pointer;
-    transition: opacity 0.2s ease;
+    transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
-.dock-capsule.expanded .primary-action {
+/* 悬停微互动：文字稍微变深或位移，增加点击欲 */
+.primary-action:hover {
+    color: #000;
+    transform: scale(1.05);
+    /* 微微放大 */
+}
+
+.dock-wrapper.expanded .primary-action {
     opacity: 1;
     transition-delay: 0.1s;
+}
+
+/* === 新增：聊天小图标样式 === */
+.chat-icon {
+    width: 18px;
+    /* 🔥 必须比主图标(40px)小很多 */
+    height: 18px;
+    object-fit: contain;
+    display: block;
+    /* 防止图片底部有奇怪的留白 */
 }
 
 /* === 4. 下层：功能网格 (向下滑出) === */
@@ -120,49 +150,84 @@ body {
     pointer-events: none;
 }
 
-/* 展开状态：显示 */
-.dock-capsule.expanded .secondary-grid {
+/* 展开状态 */
+.dock-wrapper.expanded .secondary-grid {
     height: 40px;
-    /* 撑开 */
     opacity: 1;
     transform: translateY(0);
     pointer-events: auto;
+    /* 展开后可点击 */
     transition-delay: 0.1s;
 }
 
-/* 网格内的方形小按钮 */
+/* === 网格内的方形小按钮容器 === */
 .grid-btn {
     width: 36px;
     height: 36px;
     border-radius: 10px;
     background: #fff;
     border: 2px solid #eee;
-    color: #555;
+    /* color: #555;  <-- 这个可以去掉了，不再显示文字 */
 
+    /* 确保内部图片完美居中 */
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 14px;
+
     cursor: pointer;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-    transition: all 0.2s;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.08);
+    /* 投影稍微淡一点更精致 */
+    transition: all 0.2s ease;
+    /* 增加 ease 让过渡更顺滑 */
 }
 
+/* === 新增：菜单小图标样式 === */
+.menu-icon {
+    width: 20px;
+    /* 36px 容器里放 20px 图标比较合适，留白呼吸感 */
+    height: 20px;
+    object-fit: contain;
+    /* 确保图片不变形 */
+    display: block;
+    transition: transform 0.2s ease, filter 0.2s ease;
+    /* 为图标本身增加动画 */
+}
+
+/* === 悬停交互美化 === */
 .grid-btn:hover {
-    border-color: #000;
-    background: #000;
-    color: #fff;
-    transform: scale(1.1);
+    border-color: #000000;
+    background: #c7ecef;
+    /* transform: scale(1.1); <-- 删除这个，不要放大整个按钮盒子，太傻了 */
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+    /* 悬停时投影加深，浮起感 */
 }
 
+/* 🔥 关键美化：悬停时，让里面的图标微微放大并变白 */
+.grid-btn:hover .menu-icon {
+    transform: scale(1.15);
+    filter: invert(1) brightness(2);
+}
+
+/* === 激活状态 (置顶按钮) === */
 .grid-btn.active {
-    background: #000;
-    color: #fff;
+    background: #1284ef;
     border-color: #000;
+    box-shadow: inset 0 2px 4px rgba(18, 91, 113, 0.2);
 }
 
+/* 更多按钮 (如果还保留文字的话) */
 .grid-btn.more {
     color: #ccc;
+    font-size: 18px;
+    /* 文字稍微大点 */
+    line-height: 1;
+    padding-bottom: 4px;
+    /* 微调对齐 */
+}
+
+.grid-btn.more:hover {
+    color: #fff;
+    /* 悬停变白 */
 }
 
 /* 右侧吸附的镜像处理 */
@@ -176,9 +241,19 @@ body {
 }
 
 .dock-container.right .primary-action {
+    /* 重要：因为外层 main-capsule 已经是 row-reverse 了，
+       这里的 primary-action 内部也需要 row-reverse 吗？
+       
+       取决于你想展示成：
+       左吸附: [主图] [Chat图标][文字]
+       右吸附: [文字][Chat图标] [主图]  <-- 这样是对称的
+    */
+    flex-direction: row-reverse;
+    /* 文字在左，小图标在右 */
+
+    /* 调整间距：因为 main-capsule 反转了，margin也要反转 */
     margin-left: 0;
-    margin-right: 10px;
-    text-align: right;
+    margin-right: 12px;
 }
 
 .dock-container.right .secondary-grid {
