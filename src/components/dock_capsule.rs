@@ -74,6 +74,7 @@ pub fn DockCapsule(
     let mut dock_side = use_signal(|| DockSide::Right);
     let mut is_pinned = use_signal(|| false);
     let mut is_hovering = use_signal(|| false);
+    let mut is_file_hovering = use_signal(|| false);
     let mut drag_start_offset = use_signal(|| (0.0, 0.0));
     let mut is_dragging = use_signal(|| false);
     let mut debounce_task = use_signal(|| None::<Task>);
@@ -199,12 +200,23 @@ pub fn DockCapsule(
     let handle_drag_over = move |evt: Event<DragData>| {
         evt.prevent_default();
         evt.stop_propagation();
+        if !is_file_hovering() {
+            is_file_hovering.set(true);
+        }
     };
 
-    let window_drop = window.clone();
+    let handle_drag_leave = move |evt: Event<DragData>| {
+        evt.prevent_default();
+        evt.stop_propagation();
+        is_file_hovering.set(false);
+    };
+
     let handle_drop = move |evt: Event<DragData>| {
         evt.prevent_default();
         evt.stop_propagation();
+
+        is_file_hovering.set(false);
+
         let files = evt.data().files();
         if let Some(first_file) = files.first() {
             let file_name = first_file.name();
@@ -225,14 +237,7 @@ pub fn DockCapsule(
                 status: crate::models::ActionStatus::None,
                 image: None,
             });
-
-            // 🔥 策略核心：拖拽跳转也要等待
-            let win = window_drop.clone();
-            win.set_visible(false);
-            spawn(async move {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-                window_mode.set(WindowMode::Main);
-            });
+            window_mode.set(WindowMode::Main);
         }
     };
 
@@ -260,9 +265,6 @@ pub fn DockCapsule(
         "align-items: flex-start;"
     };
 
-    let window_chat = window.clone();
-    let window_settings = window.clone();
-
     rsx! {
         div {
             class: "{container_cls}",
@@ -271,6 +273,7 @@ pub fn DockCapsule(
                 class: "{wrapper_cls}",
                 onmouseleave: handle_leave,
                 ondragover: handle_drag_over,
+                ondragleave: handle_drag_leave,
                 ondrop: handle_drop,
                 oncontextmenu: move |evt| evt.prevent_default(),
 
@@ -280,7 +283,7 @@ pub fn DockCapsule(
                     onmouseenter: handle_enter,
                     img {
                         class: "app-icon",
-                        src: asset!("assets/icon.png"),
+                        src: if is_file_hovering() { asset!("assets/get_excel.png") } else { asset!("assets/icon.png") },
                         draggable: false,
                     }
                     div {
@@ -290,12 +293,7 @@ pub fn DockCapsule(
                             if let Some(task) = debounce_task.write().take() {
                                 task.cancel();
                             }
-                            let win = window_chat.clone();
-                            win.set_visible(false);
-                            spawn(async move {
-                                tokio::time::sleep(Duration::from_millis(50)).await;
-                                window_mode.set(WindowMode::Main);
-                            });
+                            window_mode.set(WindowMode::Main);
                         },
                         span { "聊天" }
                         img {
@@ -315,12 +313,7 @@ pub fn DockCapsule(
                             if let Some(task) = debounce_task.write().take() {
                                 task.cancel();
                             }
-                            let win = window_settings.clone();
-                            win.set_visible(false);
-                            spawn(async move {
-                                tokio::time::sleep(Duration::from_millis(50)).await;
-                                window_mode.set(WindowMode::Settings);
-                            });
+                            window_mode.set(WindowMode::Settings);
                         },
                         img {
                             class: "menu-icon",

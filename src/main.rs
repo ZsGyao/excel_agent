@@ -46,12 +46,14 @@ fn main() {
         }
     };
 
+    // 🔥 恢复默认行为：不需要在这里 set_visible(false)
+    // 除非你真的想防止启动那一下白屏，否则 true 体验更好
     let window_builder = WindowBuilder::new()
         .with_title("Excel Agent")
         .with_inner_size(LogicalSize::new(130.0, 160.0))
         .with_decorations(false)
         .with_transparent(true)
-        .with_visible(false) // 初始隐藏，防止白屏
+        .with_visible(true)
         .with_undecorated_shadow(false)
         .with_skip_taskbar(true)
         .with_always_on_top(true);
@@ -82,6 +84,65 @@ fn get_work_area_rect() -> (i32, i32, i32, i32) {
         }
     }
     (1920, 1080, 0, 0)
+}
+
+// 🔥🔥🔥 核心：Windows 原子操作函数 🔥🔥🔥
+// 这个函数会同时修改位置和大小，操作系统保证这发生在同一帧
+#[cfg(target_os = "windows")]
+fn atomic_update_window(
+    window: &dioxus::desktop::DesktopContext,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    always_on_top: bool,
+) {
+    // 1. 获取底层 HWND 句柄
+
+    use raw_window_handle::HasWindowHandle;
+    let hwnd = if let Ok(handle) = window.window_handle() {
+        use raw_window_handle::RawWindowHandle;
+
+        if let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
+            use windows_sys::Win32::Foundation::HWND;
+
+            Some(win32_handle.hwnd.get() as HWND)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if let Some(hwnd) = hwnd {
+        // 2. 调用 SetWindowPos 原子更新
+        // SWP_NOACTIVATE: 不自动激活窗口（防止抢焦点）
+        // SWP_NOZORDER: 保持当前的 Z 轴顺序（置顶状态由 Dioxus 管理，或者我们自己管理 ）
+        unsafe {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER,
+            };
+
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(), // 这里不改变 Z-order，除非我们需要强制置顶
+                x,
+                y,
+                w,
+                h,
+                SWP_NOACTIVATE | SWP_NOZORDER,
+            );
+        }
+    } else {
+        // 兜底：如果获取不到句柄，回退到 Dioxus 的方法
+
+        use dioxus::desktop::wry::dpi::PhysicalSize;
+        window.set_outer_position(PhysicalPosition::new(x, y));
+        window.set_inner_size(PhysicalSize::new(w as u32, h as u32));
+    }
+
+    // 独立设置置顶，因为这个通常不需要和几何变换原子化
+    window.set_always_on_top(always_on_top);
 }
 
 #[component]
@@ -115,21 +176,19 @@ fn App() -> Element {
             let phys_y = (center_y * scale).round() as i32;
             last_widget_pos.set(Some(PhysicalPosition::new(phys_x, phys_y)));
 
-            window_init.set_visible(true);
             window_init.set_focus();
         }
     });
 
-    // 核心：监听模式变化，调整窗口物理属性
+    // 🔥🔥🔥 核心修复：移除所有 set_visible hack，优化顺序 🔥🔥🔥
     let window_effect = window.clone();
     use_effect(move || {
-        // 读取信号，建立依赖
         let mode = window_mode();
-
         let monitor_opt = window_effect.current_monitor();
         if monitor_opt.is_none() {
             return;
         }
+
         let monitor = monitor_opt.unwrap();
         let scale = monitor.scale_factor();
         let (work_w_phys, work_h_phys, work_x_phys, work_y_phys) = get_work_area_rect();
@@ -137,72 +196,141 @@ fn App() -> Element {
         let work_h = work_h_phys as f64 / scale;
         let work_top = work_y_phys as f64 / scale;
 
-        // 再次强制隐藏，确保万无一失
-        window_effect.set_visible(false);
+        // 获取当前窗口状态，用于判断是"变大"还是"变小"
+        let current_width = window_effect.inner_size().width;
+        let is_shrinking = current_width > 200 && mode == WindowMode::Widget;
 
-        match mode {
+        // 计算目标参数
+        let (target_w_phys, target_h_phys, target_x_phys, target_y_phys, always_on_top) = match mode
+        {
             WindowMode::Widget => {
-                window_effect.set_inner_size(LogicalSize::new(CAPSULE_W, CAPSULE_H));
-                window_effect.set_always_on_top(true);
-
-                if let Some(pos) = last_widget_pos() {
-                    let logic_x = pos.x as f64 / scale;
-                    let logic_y = pos.y as f64 / scale;
-                    window_effect.set_outer_position(LogicalPosition::new(logic_x, logic_y));
+                let (tx, ty) = if let Some(pos) = last_widget_pos() {
+                    (pos.x, pos.y)
                 } else {
                     let center_y = work_top + (work_h - CAPSULE_H) / 2.0;
                     let default_x = (work_w_phys as f64 / scale) - CAPSULE_W;
-                    window_effect.set_outer_position(LogicalPosition::new(default_x, center_y));
-                }
+                    (
+                        (default_x * scale).round() as i32,
+                        (center_y * scale).round() as i32,
+                    )
+                };
+                (
+                    (CAPSULE_W * scale).round() as i32,
+                    (CAPSULE_H * scale).round() as i32,
+                    tx,
+                    ty,
+                    true,
+                )
             }
             WindowMode::Main => {
-                if let Ok(current_pos) = window_effect.outer_position() {
-                    if window_effect.inner_size().width < 200 {
+                // 记录位置逻辑
+                if window_effect.inner_size().width < 200 {
+                    if let Ok(current_pos) = window_effect.outer_position() {
                         last_widget_pos.set(Some(current_pos));
                     }
-                    let anchor_pos = last_widget_pos().unwrap_or(current_pos);
-                    let anchor_x = anchor_pos.x as f64 / scale;
-                    let target_h = work_h - (MARGIN * 2.0);
-                    let target_y = work_top + MARGIN;
-                    let screen_center_x = (work_x_phys as f64 / scale) + (work_w / 2.0);
-                    let target_x = if anchor_x > screen_center_x {
-                        (work_w_phys as f64 / scale) - CARD_W - MARGIN
-                    } else {
-                        (work_x_phys as f64 / scale) + MARGIN
-                    };
-                    window_effect.set_outer_position(LogicalPosition::new(target_x, target_y));
-                    window_effect.set_inner_size(LogicalSize::new(CARD_W, target_h));
                 }
-                window_effect.set_always_on_top(true);
+
+                let anchor_pos = last_widget_pos().unwrap_or(PhysicalPosition::new(0, 0));
+                let anchor_x = anchor_pos.x as f64 / scale;
+                let th = work_h - (MARGIN * 2.0);
+                let ty = work_top + MARGIN;
+                let screen_center_x = (work_x_phys as f64 / scale) + (work_w / 2.0);
+                let tx = if anchor_x > screen_center_x {
+                    (work_w_phys as f64 / scale) - CARD_W - MARGIN
+                } else {
+                    (work_x_phys as f64 / scale) + MARGIN
+                };
+
+                (
+                    (CARD_W * scale).round() as i32,
+                    (th * scale).round() as i32,
+                    (tx * scale).round() as i32,
+                    (ty * scale).round() as i32,
+                    true,
+                )
             }
             WindowMode::Settings => {
-                let center_x = (work_x_phys as f64 / scale) + (work_w - SETTINGS_W) / 2.0;
-                let center_y = work_top + (work_h - SETTINGS_H) / 2.0;
-                window_effect.set_inner_size(LogicalSize::new(SETTINGS_W, SETTINGS_H));
-                window_effect.set_outer_position(LogicalPosition::new(center_x, center_y));
-                window_effect.set_always_on_top(false);
+                let cx = (work_x_phys as f64 / scale) + (work_w - SETTINGS_W) / 2.0;
+                let cy = work_top + (work_h - SETTINGS_H) / 2.0;
+                (
+                    (SETTINGS_W * scale).round() as i32,
+                    (SETTINGS_H * scale).round() as i32,
+                    (cx * scale).round() as i32,
+                    (cy * scale).round() as i32,
+                    false,
+                )
             }
-        }
+        };
 
-        // 延迟显示：这是防闪烁的第二道防线
-        let window_show = window_effect.clone();
-        spawn(async move {
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            window_show.set_visible(true);
-            window_show.set_focus();
-        });
+        // 🔥🔥🔥 核心动画策略 🔥🔥🔥
+        if is_shrinking {
+            // === 场景：从大变小 (Settings/Main -> Widget) ===
+            // 解决 "右侧瞬间渲染" 问题
+            // 策略：1. 先原地变小 (视觉上：界面收缩)
+            //       2. 再移动到角落 (视觉上：小球飞走)
+
+            let win = window_effect.clone();
+            spawn(async move {
+                // 1. 获取当前中心点（为了原地收缩）
+                if let Ok(curr_pos) = win.outer_position() {
+                    let curr_size = win.inner_size();
+                    // 计算出能保持中心点不变的新左上角坐标
+                    // 新X = 旧X + (旧宽 - 新宽)/2
+                    let center_fix_x = curr_pos.x + ((curr_size.width as i32 - target_w_phys) / 2);
+                    let center_fix_y = curr_pos.y + ((curr_size.height as i32 - target_h_phys) / 2);
+
+                    // 步骤 A: 原地变形 (保持 UI 在用户注视的位置)
+                    atomic_update_window(
+                        &win,
+                        center_fix_x,
+                        center_fix_y,
+                        target_w_phys,
+                        target_h_phys,
+                        always_on_top,
+                    );
+                }
+
+                // 2. 稍微停顿，让用户看清"它变小了"，并等待 Dioxus 渲染完小界面
+                // 150ms 足够让 WebView 重绘，且不会觉得太慢
+                tokio::time::sleep(Duration::from_millis(150)).await;
+
+                // 步骤 B: 归位 (移动到右下角/锚点)
+                atomic_update_window(
+                    &win,
+                    target_x_phys,
+                    target_y_phys,
+                    target_w_phys,
+                    target_h_phys,
+                    always_on_top,
+                );
+                win.set_focus();
+            });
+        } else {
+            // === 场景：从小变大 (Widget -> Settings/Main) ===
+            // 或者是 大变大 (Main <-> Settings)
+            // 直接一步到位，因为"展开"通常不需要太复杂的过渡，瞬移到中心展开感觉是自然的
+            atomic_update_window(
+                &window_effect,
+                target_x_phys,
+                target_y_phys,
+                target_w_phys,
+                target_h_phys,
+                always_on_top,
+            );
+            window_effect.set_focus();
+        }
     });
 
-    // 修复托盘逻辑报错
-    let window_tray = window.clone();
+    // 托盘点击逻辑
     use_future(move || {
-        let window = window_tray.clone(); // 🔥 修复 E0507: 在这里 clone
+        let window = window.clone();
         async move {
             let receiver = TrayIconEvent::receiver();
             loop {
                 if let Ok(event) = receiver.try_recv() {
                     if let TrayIconEvent::Click { .. } = event {
-                        window.set_visible(false);
+                        window.set_visible(true);
+                        window.set_focus();
                         window_mode.set(WindowMode::Main);
                     }
                 }
@@ -228,11 +356,6 @@ fn App() -> Element {
     let mut is_dragging = use_signal(|| false);
     let is_loading = use_signal(|| false);
 
-    // 为按钮事件准备的 Window Clone
-    let window_close_settings = window.clone();
-    let window_to_settings = window.clone();
-    let window_to_widget = window.clone();
-
     rsx! {
         document::Stylesheet { href: asset!("/assets/main.css") }
 
@@ -244,15 +367,7 @@ fn App() -> Element {
                 oncontextmenu: move |evt| evt.prevent_default(),
                 Settings {
                     config,
-                    // 🔥 策略核心：先隐藏 -> 等50ms -> 再切换状态
-                    on_close: move |_| {
-                        let win = window_close_settings.clone();
-                        win.set_visible(false); // 1. 马上消失
-                        spawn(async move {
-                            tokio::time::sleep(Duration::from_millis(50)).await; // 2. 给系统喘息时间
-                            window_mode.set(WindowMode::Widget); // 3. 切换状态（此时窗口是隐藏的）
-                        });
-                    },
+                    on_close: move |_| window_mode.set(WindowMode::Widget),
                 }
             }
         } else {
@@ -262,31 +377,15 @@ fn App() -> Element {
 
                 div { class: "panel-header",
                     div { class: "title-text", "Excel AI Agent" }
-                    // 切换到设置
                     div {
                         class: "icon-btn",
                         title: "设置",
-                        onclick: move |_| {
-                            let win = window_to_settings.clone();
-                            win.set_visible(false);
-                            spawn(async move {
-                                tokio::time::sleep(Duration::from_millis(50)).await;
-                                window_mode.set(WindowMode::Settings);
-                            });
-                        },
+                        onclick: move |_| window_mode.set(WindowMode::Settings),
                         "⚙️"
                     }
-                    // 最小化到 Widget
                     div {
                         style: "cursor: pointer; padding: 5px;",
-                        onclick: move |_| {
-                            let win = window_to_widget.clone();
-                            win.set_visible(false);
-                            spawn(async move {
-                                tokio::time::sleep(Duration::from_millis(50)).await;
-                                window_mode.set(WindowMode::Widget);
-                            });
-                        },
+                        onclick: move |_| window_mode.set(WindowMode::Widget),
                         "⏬"
                     }
                 }
