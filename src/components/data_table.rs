@@ -1,32 +1,34 @@
-use dioxus::{
-    html::{table, thead},
-    prelude::*,
-};
+use dioxus::prelude::*;
 
-use crate::models::TableData;
+#[derive(PartialEq, Clone, Props)]
+pub struct TableData {
+    pub headers: Vec<String>,
+    pub data: Vec<Vec<String>>,
+}
 
 #[component]
 pub fn DataTable(data: TableData) -> Element {
-    rsx!(div {
-        class: "table-container",
-        table {
-            thead {
-                tr {
-                    for col in data.columns.iter() {
-                        th {"{col}"}
+    rsx! {
+        div { class: "table-container",
+            table {
+                thead {
+                    tr {
+                        for header in data.headers.iter() {
+                            th { "{header}" }
+                        }
                     }
                 }
-            }
-            tbody {
-                for row in data.data.iter() {
-                    tr {
-                        for cell in row.iter() {
-                            // Handle different data, remove ""
-                            td { "{cell.to_string().trim_matches('\"')}" }
+                tbody {
+                    // 🔥 修复 E0282: 明确闭包参数类型
+                    for row in data.data.iter() {
+                        tr {
+                            for cell in row.iter() {
+                                td { "{cell}" }
+                            }
                         }
                     }
                 }
             }
         }
-    })
+    }
 }

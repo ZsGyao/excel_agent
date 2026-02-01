@@ -1,103 +1,153 @@
-use crate::models::{AiReply, ChatRequest, ChatResponse, MessageApi};
-use reqwest;
-use serde_json;
+use anyhow::Result;
+use reqwest::{self, Client};
+use serde_json::{self, json, Value};
+use std::{
+    fs::{self, read_to_string},
+    path::Path,
+};
+
+use crate::models::AppConfig;
+
+// 内置兜底 Prompt，防止文件被误删后软件直接崩溃
+const DEFAULT_FALLBACK_PROMPT: &str = r#"
+# 角色设定
+你是一个拥有 10 年经验的 Python 数据分析专家，也是一个 Excel 自动化大师。
+你的任务是根据用户的需求，判断是进行普通对话，还是编写 Python 代码来处理 Excel 数据。
+
+# 核心交互规则 (请严格遵守)
+1. **普通闲聊/解释**：
+   - 如果用户的输入是问候、询问概念或不需要实际操作 Excel 的请求，请直接用**纯文本**回答，**不要**包含任何代码块。
+   
+2. **执行任务**：
+   - 如果用户要求处理数据、修改 Excel 或计算内容，请务必输出 Python 代码。
+   - **代码必须且只能**包含在 Markdown 代码块中，格式如下：
+     ```python
+     # 你的代码写在这里
+     ```
+   - 严禁输出代码块以外的解释性文字（除非非常必要），让代码块作为主要回复。
+
+# 代码编写规范 (Production Level)
+1. **完整性**：代码必须包含所有必要的 import 语句 (`import pandas as pd`, `import xlwings as xw`, `import os`)。
+2. **上下文感知**：用户当前操作的文件路径会包含在消息中，请从中提取并赋值给 `target_file` 变量。
+3. **打印输出**：所有处理结果、统计信息必须使用 `print()` 输出，以便在用户界面显示。
+
+# 核心技术规则：智能保存策略 (热更新)
+在 Windows 环境下，为了实现“所见即所得”并防止文件锁死 (Permission denied)，**严禁**直接使用 `df.to_excel()` 覆盖原文件。
+
+**请严格按照以下模板结构编写最后的数据写入逻辑**：
+
+```python
+import pandas as pd
+import xlwings as xw
+import os
+
+# ... [这里是你处理数据的逻辑，生成的最终 dataframe 变量名必须为 df] ...
+
+# 【关键】从上下文或硬编码中获取目标路径
+# 如果用户没有指定新路径，默认覆盖当前文件
+# 注意：Prompt Context 会告诉你当前文件路径，请灵活使用
+target_file = r"{file_path_placeholder}" 
+
+try:
+    # 1. 尝试连接当前活动的 Excel 实例（热更新模式）
+    filename = os.path.basename(target_file)
+    
+    # 尝试寻找已打开的 workbook
+    # 如果文件没打开，xlwings 会抛出异常，自动跳转到 except
+    wb = xw.books[filename]
+    
+    # 2. 如果找到了，直接写入当前活跃界面
+    # 激活该工作簿
+    wb.activate()
+    sheet = wb.sheets.active 
+    
+    # 清空原有区域，防止旧数据残留 (视情况而定，全量更新时必须清空)
+    sheet.clear() 
+    
+    # 将 DataFrame 写入，默认不带 index (除非用户明确要求保留索引)
+    sheet.range('A1').options(index=False).value = df 
+    
+    print(f"✨ 成功！数据已实时更新到打开的 Excel 窗口：{filename}")
+
+except Exception as e:
+    # 3. 如果没打开 Excel，或者连接失败，则降级为写入磁盘
+    print(f"👀 未检测到活动的 Excel 窗口，正在保存到磁盘... ({e})")
+    try:
+        df.to_excel(target_file, index=False)
+        print(f"💾 文件已保存到硬盘：{target_file}")
+    except Exception as save_error:
+         print(f"❌ 保存失败 (文件可能被占用且无法连接): {save_error}")
+"#;
+
+/// 读取外置 System Prompt
+fn get_system_prompt() -> String {
+    let path = Path::new("assets/system_prompt.md");
+    match read_to_string(path) {
+        Ok(content) => {
+            println!("✅ 已加载外部 System Prompt");
+            content
+        }
+        Err(e) => {
+            println!("⚠️ 读取 Prompt 失败: {}, 使用内置默认值", e);
+            DEFAULT_FALLBACK_PROMPT.to_string()
+        }
+    }
+}
 
 pub async fn call_ai(
-    api_key: String,
-    base_url: String,
-    model_name: String,
-    prompt: String,
-    columns: String,
-) -> Result<AiReply, String> {
+    config: &AppConfig,
+    user_content: &str,
+    context: Option<String>,
+) -> Result<String> {
+    let profile = config.active_profile();
+    let api_key = &profile.api_key;
+    let base_url = &profile.base_url;
+    let model = &profile.model_id;
+
     if api_key.is_empty() {
-        return Err("请先在设置中配置 API Key".to_string());
+        return Ok("请先在设置中配置 API Key".to_string());
     }
 
-    let client = reqwest::Client::new();
+    let client = Client::new();
 
-    // 🔥 核心修改：升级 System Prompt，要求返回 JSON
-    let system_prompt = format!(
-        r#"你是一个 Python Pandas 数据分析专家，同时也是一位助手。
-当前处理的 Excel 表格包含列: [{}]。
-Dataframe 变量名为 `df`。
+    // 1. 读取 Prompt
+    let mut system_instruction = get_system_prompt();
 
-请根据用户的输入判断意图，并严格按照以下 JSON 格式返回（不要包含 markdown 代码块标记）：
+    // 2. 注入 Context (文件路径、表头)
+    if let Some(ctx) = context {
+        system_instruction = format!("{}\n\n【Context】\n{}", system_instruction, ctx);
+    }
 
-场景 1：如果用户需要处理数据
-{{
-  "reply_type": "code",
-  "content": "这里写 Python 代码，例如 result = df['Age'].mean()"
-}}
+    println!("🤖 请求 AI: {}", model);
 
-场景 2：如果用户只是闲聊或询问非数据问题
-{{
-  "reply_type": "chat",
-  "content": "这里写你的回复文本"
-}}
-
-代码要求：
-1. 必须修改 `df` 或将结果赋值给 `result`。
-2. 只能使用 pandas (pd) 和 numpy (np)。
-"#,
-        columns
-    );
-
-    let req_body = ChatRequest {
-        model: model_name,
-        messages: vec![
-            MessageApi {
-                role: "system".into(),
-                content: system_prompt,
-            },
-            MessageApi {
-                role: "user".into(),
-                content: prompt,
-            },
-        ],
-    };
-
-    let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
-
-    let res = client
-        .post(&url)
+    let response = client
+        .post(format!(
+            "{}/chat/completions",
+            base_url.trim_end_matches('/')
+        ))
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
-        .json(&req_body)
+        .json(&json!({
+            "model": model,
+            "messages": [
+                { "role": "system", "content": system_instruction },
+                { "role": "user", "content": user_content }
+            ],
+            "temperature": 0.1
+        }))
         .send()
-        .await
-        .map_err(|e| format!("网络错误: {}", e))?;
+        .await?;
 
-    let status = res.status();
-    if !status.is_success() {
-        let error_text = res.text().await.unwrap_or_default();
-        return Err(format!("API 错误 (Status {}): {}", status, error_text));
+    if !response.status().is_success() {
+        let error = response.text().await?;
+        return Ok(format!("API 请求错误: {}", error));
     }
 
-    let json: ChatResponse = res.json().await.map_err(|e| format!("解析失败: {}", e))?;
+    let json: Value = response.json().await?;
+    let content = json["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
 
-    if let Some(choice) = json.choices.first() {
-        let raw_content = choice.message.content.clone();
-
-        // 清洗一下可能存在的 markdown 标记 (有些模型不听话，还是会加 ```json)
-        let clean_json = raw_content
-            .replace("```json", "")
-            .replace("```", "")
-            .trim()
-            .to_string();
-
-        // 尝试解析 JSON
-        match serde_json::from_str::<AiReply>(&clean_json) {
-            Ok(reply) => Ok(reply),
-            Err(_) => {
-                // 如果解析失败（模型太笨没返回 JSON），默认当做聊天处理
-                // 或者尝试当做代码处理，这里我们保守一点，当做聊天
-                Ok(AiReply {
-                    reply_type: "chat".to_string(),
-                    content: raw_content, // 原样返回
-                })
-            }
-        }
-    } else {
-        Err("AI 未返回内容".into())
-    }
+    Ok(content)
 }

@@ -228,15 +228,11 @@ pub fn DockCapsule(
                 .to_string();
             last_file_path.set(full_path);
             let new_msg_id = messages.read().len();
-            messages.write().push(ChatMessage {
-                id: new_msg_id,
-                text: format!("📄 收到文件: {}", file_name),
-                is_user: false,
-                table: None,
-                temp_id: None,
-                status: crate::models::ActionStatus::None,
-                image: None,
-            });
+            messages.write().push(ChatMessage::new(
+                new_msg_id,
+                format!("📄 收到文件: {}", file_name),
+                false,
+            ));
             window_mode.set(WindowMode::Main);
         }
     };

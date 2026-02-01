@@ -15,10 +15,11 @@ use dioxus::html::HasFileData;
 use dioxus::prelude::*;
 
 use crate::components::dock_capsule::DockCapsule;
-use crate::models::WindowMode;
+use crate::models::{ActionStatus, WindowMode};
 use crate::services::config::load_config;
+use crate::services::python::{backup_file, restore_file, run_python_code};
 use components::{chat_view::ChatView, input_area::InputArea, settings::Settings};
-use models::{ChatMessage, View};
+use models::ChatMessage;
 
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Foundation::RECT;
@@ -339,22 +340,115 @@ fn App() -> Element {
         }
     });
 
-    let current_view = use_signal(|| View::Chat);
-    let mut messages = use_signal(|| {
-        vec![ChatMessage {
-            id: 0,
-            text: "👋 嗨！把 Excel 拖进来，然后去设置里配一下 API Key。".into(),
-            is_user: false,
-            table: None,
-            temp_id: None,
-            status: models::ActionStatus::None,
-            image: None,
-        }]
-    });
+    let mut messages =
+        use_signal(|| vec![ChatMessage::new(0, "👋 嗨！把 Excel 拖进来开始吧。", false)]);
     let config = use_signal(|| load_config());
     let mut last_file_path = use_signal(|| String::new());
     let mut is_dragging = use_signal(|| false);
     let is_loading = use_signal(|| false);
+
+    // 错误修复信号
+    let mut error_fix_signal = use_signal(|| None::<String>);
+    let mut retry_count = use_signal(|| 0);
+    const MAX_RETRIES: i32 = 3;
+
+    // 🔥 1. Confirm 回调
+    let mut on_confirm = move |msg_id: usize| {
+        // 🔥 修复 E0503: 获取值后立即释放锁，不要持有 MutexGuard 跨 await
+        let pending_code_opt = {
+            let mut msgs = messages.write();
+            let msg = &mut msgs[msg_id];
+            if let Some(code) = msg.pending_code.clone() {
+                msg.status = ActionStatus::Running;
+                // 备份文件
+                let target_file = last_file_path();
+                if !target_file.is_empty() {
+                    // 🔥 修复 E0425: backup_file 已引入
+                    msg.backup_path = backup_file(&target_file);
+                }
+                Some(code)
+            } else {
+                None
+            }
+        };
+
+        if let Some(code) = pending_code_opt {
+            spawn(async move {
+                let res: anyhow::Result<String, String> = run_python_code(&code).await;
+
+                let mut msgs = messages.write();
+                if let Some(msg) = msgs.get_mut(msg_id) {
+                    match res {
+                        Ok(out) => {
+                            msg.status = ActionStatus::Success;
+                            msg.text.push_str(&format!("\n\n✨ 结果:\n{}", out));
+                            // 成功后，重置重试计数器
+                            retry_count.set(0);
+                        }
+                        Err(e) => {
+                            msg.status = ActionStatus::Error(e.clone());
+                            msg.text.push_str(&format!("\n\n❌ 错误:\n{}", e));
+                            // 触发修复
+                            let current_retries = *retry_count.read();
+                            if current_retries < MAX_RETRIES {
+                                // 没超过上限，继续自动修复
+                                retry_count += 1;
+                                msg.text.push_str(&format!(
+                                    "\n\n🔄 自动修复中 (尝试 {}/{})...",
+                                    current_retries + 1,
+                                    MAX_RETRIES
+                                ));
+                                error_fix_signal.set(Some(e));
+                            } else {
+                                // 超过上限，放弃治疗
+                                msg.text.push_str(&format!("\n\n🛑 已达到最大重试次数 ({})，停止自动修复。请检查提示词或手动修改代码。", MAX_RETRIES));
+                                // 重置计数器，等待用户下次手动操作
+                                retry_count.set(0);
+                                // 注意：这里不再设置 error_fix_signal，循环中止
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    };
+
+    // 手动点击执行时，也要重置计数器 (算作一次全新操作)
+    let on_manual_confirm = move |id| {
+        retry_count.set(0); // 用户手动点击了，说明是一次新的尝试，计数归零
+        on_confirm(id);
+    };
+
+    // 🔥 2. Auto Run 回调 (逻辑完全一样，复制一份以避开 borrow checker)
+    let on_auto_run = move |id| {
+        on_confirm(id);
+    };
+
+    let on_cancel = move |id: usize| {
+        let mut msgs = messages.write();
+        if let Some(msg) = msgs.get_mut(id) {
+            msg.status = ActionStatus::Cancelled;
+            msg.pending_code = None;
+            retry_count.set(0); // 取消也重置计数
+        }
+    };
+
+    let on_undo = move |id: usize| {
+        let mut msgs = messages.write();
+        if let Some(msg) = msgs.get_mut(id) {
+            if let Some(bk) = &msg.backup_path {
+                let target = last_file_path();
+                // 🔥 修复 E0425: restore_file 已引入
+                match restore_file(&target, bk) {
+                    Ok(_) => {
+                        msg.status = ActionStatus::Undone;
+                        msg.text.push_str("\n\n↩️ 已撤销");
+                    }
+                    Err(e) => msg.text.push_str(&format!("\n❌ 撤销失败: {}", e)),
+                }
+            }
+        }
+    };
 
     rsx! {
         document::Stylesheet { href: asset!("/assets/main.css") }
@@ -413,12 +507,21 @@ fn App() -> Element {
                         if is_dragging() {
                             div { class: "drag-overlay", "📂 投喂 Excel！" }
                         }
-                        ChatView { messages, last_file_path }
+                        ChatView {
+                            messages,
+                            last_file_path,
+                            on_confirm: on_manual_confirm,
+                            on_cancel,
+                            on_undo,
+                        }
+
                         InputArea {
                             messages,
                             last_file_path,
                             is_loading,
                             config,
+                            error_fix_signal,
+                            on_run_code: on_auto_run,
                         }
                     }
                 }

@@ -1,101 +1,87 @@
-use crate::components::data_table::DataTable;
-use crate::models::{ActionStatus, ChatMessage}; // ✅ 引入 ActionStatus
-use crate::services::python;
-use dioxus::document::eval;
-// ✅ 引入 python 服务
-use dioxus::prelude::*;
-use tokio::task; // ✅ 引入 task
+use crate::models::{ActionStatus, ChatMessage};
+use dioxus::{document::eval, prelude::*};
 
 #[component]
-pub fn ChatView(messages: Signal<Vec<ChatMessage>>, last_file_path: Signal<String>) -> Element {
-    // 处理点击确认
-    let handle_confirm = move |msg_id: usize, temp_id: String| {
-        let path = last_file_path.read().clone();
-        spawn(async move {
-            let result = task::spawn_blocking(move || python::confirm_save(&path, &temp_id))
-                .await
-                .unwrap_or("❌ 线程错误".to_string());
-
-            let mut msgs = messages.write();
-            if let Some(msg) = msgs.iter_mut().find(|m| m.id == msg_id) {
-                msg.status = ActionStatus::Confirmed;
-                msg.text = format!("{}\n\n{}", msg.text, result);
-            }
-        });
-    };
-
-    // 处理点击放弃
-    let handle_discard = move |msg_id: usize, temp_id: String| {
-        let path = last_file_path.read().clone();
-        spawn(async move {
-            let _ = task::spawn_blocking(move || python::discard_change(&path, &temp_id)).await;
-
-            let mut msgs = messages.write();
-            if let Some(msg) = msgs.iter_mut().find(|m| m.id == msg_id) {
-                msg.status = ActionStatus::Discarded;
-                msg.text = format!("{}\n\n(已放弃修改)", msg.text);
-                msg.table = None;
-            }
-        });
-    };
-
-    // 每次 messages 变化时，JS 脚本会把 .chat-scroll 滚动条拉到底
+pub fn ChatView(
+    messages: Signal<Vec<ChatMessage>>,
+    last_file_path: Signal<String>,
+    on_confirm: EventHandler<usize>,
+    on_cancel: EventHandler<usize>,
+    on_undo: EventHandler<usize>,
+) -> Element {
     use_effect(move || {
-        // 依赖 messages 变化
-        let _ = messages.read().len();
-
-        // 延时一点点执行，确保 DOM 已经渲染
-        spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            let eval = eval(
-                r#"
-                var element = document.querySelector('.chat-scroll');
-                if (element) {
-                    element.scrollTop = element.scrollHeight;
-                }
-            "#,
-            );
-            let _ = eval.await;
-        });
+        messages.read();
+        let _ = eval(
+            r#"
+            const el = document.getElementById('chat-container');
+            if (el) el.scrollTop = el.scrollHeight;
+        "#,
+        );
     });
 
+    // 克隆一份数据用于渲染，避免持有读锁
+    let msgs = messages.read().clone();
+
     rsx! {
-        div { class: "chat-scroll",
-            for msg in messages.read().iter() {
+        div { id: "chat-scroll", class: "chat-scroll",
+            for msg in msgs.iter() {
                 div {
-                    key: "{msg.id}",
                     class: if msg.is_user { "message msg-user" } else { "message msg-ai" },
+                    key: "{msg.id}",
 
-                    div { style: "white-space: pre-wrap;", "{msg.text}" }
-
-                    if let Some(table_data) = &msg.table {
-                        DataTable { data: table_data.clone() }
+                    div { class: "white-space: pre-wrap;", "{msg.text}" }
+                    if let Some(img) = &msg.image {
+                        img {
+                            class: "msg-image",
+                            src: "{img}",
+                            style: "max-width: 100%; margin-top: 8px; border-radius: 4px;",
+                        }
                     }
 
-                    if msg.status == ActionStatus::Pending {
-                        if let Some(temp_id) = &msg.temp_id {
-                            // ✅ 修复点：用 {} 包裹代码块，然后再返回 rsx!
-                            {
-                                let t_id_confirm = temp_id.clone();
-                                let t_id_discard = temp_id.clone();
-                                let m_id = msg.id;
-
-                                rsx! {
-                                    div { style: "margin-top: 10px; display: flex; gap: 10px;",
-                                        button {
-                                            class: "btn-confirm",
-                                            onclick: move |_| handle_confirm(m_id, t_id_confirm.clone()),
-                                            "✅ 确认生效"
+                    match msg.status {
+                        ActionStatus::WaitingConfirmation => {
+                            // 提取 id，确保闭包捕获的是 Copy 后的值，而不是 msg 的引用
+                            let id = msg.id;
+                            rsx! {
+                                div { class: "action-bar",
+                                    div { class: "code-preview",
+                                        if let Some(code) = &msg.pending_code {
+                                            pre { style: "font-size:0.8em; opacity:0.7; max-height:100px; overflow:hidden;",
+                                                "{code}"
+                                            } // 🔥 使用 move 捕获 id (usize 是 Copy 的) // 🔥 使用 move 捕获 id (usize 是 Copy 的) // 🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的) // 🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的) // 🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的) // 🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的) // 🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)  🔥 使用 move 捕获 id (usize 是 Copy 的)
                                         }
-                                        button {
-                                            class: "btn-discard",
-                                            onclick: move |_| handle_discard(m_id, t_id_discard.clone()),
-                                            "🗑️ 放弃"
-                                        }
+                                    }
+                                    div { class: "btn-group",
+                                        // 🔥 使用 move 捕获 id (usize 是 Copy 的)
+                                        button { class: "confirm-btn", onclick: move |_| on_confirm.call(id), "✅ 执行" }
+                                        button { class: "cancel-btn", onclick: move |_| on_cancel.call(id), "🚫 取消" }
                                     }
                                 }
                             }
                         }
+                        ActionStatus::Running => rsx! {
+                            div { class: "status-label running", "⏳ 运行中..." }
+                        },
+                        ActionStatus::Success => {
+                            let id = msg.id;
+                            rsx! {
+                                if msg.backup_path.is_some() {
+                                    div { class: "action-bar",
+                                        button { class: "undo-btn", onclick: move |_| on_undo.call(id), "↩️ 撤销" }
+                                    }
+                                }
+                            }
+                        }
+                        ActionStatus::Error(ref e) => rsx! {
+                            div { class: "status-label error", "❌ {e}" }
+                        },
+                        ActionStatus::Cancelled => rsx! {
+                            div { class: "status-label cancelled", "🚫 已取消" }
+                        },
+                        ActionStatus::Undone => rsx! {
+                            div { class: "status-label undone", "↩️ 已撤销" }
+                        },
+                        _ => rsx! {},
                     }
                 }
             }

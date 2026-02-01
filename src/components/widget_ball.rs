@@ -60,15 +60,13 @@ pub fn WidgetBall(
                         let new_id = messages.read().len();
                         messages
                             .write()
-                            .push(ChatMessage {
-                                id: new_id,
-                                text: format!("📂 已通过悬浮球加载: {}", file_name),
-                                is_user: false,
-                                table: None,
-                                temp_id: None,
-                                status: ActionStatus::None,
-                                image: None,
-                            });
+                            .push(
+                                ChatMessage::new(
+                                    new_id,
+                                    format!("📄 收到文件: {}", file_name),
+                                    false,
+                                ),
+                            );
                         window_mode.set(WindowMode::Main);
                     }
                 },

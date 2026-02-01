@@ -1,130 +1,149 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Basic View
-#[derive(Clone, PartialEq, Copy)]
-pub enum View {
-    Chat,
+/// 窗口显示模式
+#[derive(Clone, PartialEq, Debug, Copy)]
+pub enum WindowMode {
+    /// 桌面小部件模式（胶囊悬浮窗）
+    Widget,
+    /// 主聊天界面
+    Main,
+    /// 设置界面
     Settings,
 }
 
-/// Window Mode Status
-#[derive(Clone, PartialEq, Debug, Copy)]
-pub enum WindowMode {
-    Widget,   // Floating ball
-    Main,     // Main window
-    Settings, // Settings panel
-}
-
-/// Action Status
-#[derive(Clone, PartialEq, Debug)]
+/// 操作执行的状态机
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum ActionStatus {
-    None,      // Normal chat, no operation
-    Pending,   // Wait to comfirm, show buttom 'confirm / discard'
-    Confirmed, // Already comfirmed
-    Discarded, // Already discarded
+    /// 初始状态，无操作
+    None,
+    /// 等待 AI 响应中
+    Loading,
+    /// 🔥 关键状态：AI 生成了代码，等待用户点击“执行”
+    WaitingConfirmation,
+    /// Python 代码正在后台执行
+    Running,
+    /// 执行成功
+    Success,
+    /// 执行出错，包含错误信息
+    Error(String),
+    /// 用户点击了“取消”
+    Cancelled,
+    /// 用户点击了“撤销”，已恢复备份
+    Undone,
 }
 
-/// Excel Table Struct
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct TableData {
-    pub columns: Vec<String>,
-    pub data: Vec<Vec<serde_json::Value>>, // Table unit might be num,str,null.. ,use serde_json to cover all type
-}
-
-/// Chat Message
-#[derive(Clone, PartialEq, Debug)]
+/// 聊天消息结构体
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ChatMessage {
     pub id: usize,
     pub text: String,
     pub is_user: bool,
-    pub table: Option<TableData>,
+    /// 可选：如果是数据消息，包含 HTML 表格
+    pub table: Option<String>,
+    pub temp_id: Option<String>,
+    /// 当前消息的状态
+    pub status: ActionStatus,
+    /// 可选：图片路径
     pub image: Option<String>,
-    pub temp_id: Option<String>, // Assocate to temp file id
-    pub status: ActionStatus,    // Current action status
+
+    /// 待执行的 Python 代码 (仅当 status == WaitingConfirmation 时有效)
+    pub pending_code: Option<String>,
+    /// 撤销用的备份文件路径 (仅当 status == Success 时有效)
+    pub backup_path: Option<String>,
 }
 
-/// Python execute result, used to prase JSON that the backend.py return
-#[derive(Deserialize, Debug)]
-pub struct PyExecResult {
-    pub status: String,             // "success" | "error"
-    pub message: String,            // The text back to user
-    pub preview: Option<TableData>, // Preview Data
+impl ChatMessage {
+    /// 创建一条普通消息
+    ///
+    /// # 参数
+    /// * `id` - 消息唯一 ID
+    /// * `text` - 消息文本
+    /// * `is_user` - 是否为用户发送
+    pub fn new(id: usize, text: impl Into<String>, is_user: bool) -> Self {
+        Self {
+            id,
+            text: text.into(),
+            is_user,
+            table: None,
+            temp_id: None,
+            status: ActionStatus::None,
+            image: None,
+            pending_code: None,
+            backup_path: None,
+        }
+    }
+
+    /// 创建一条 AI "思考中" 的占位消息
+    pub fn loading(id: usize) -> Self {
+        Self {
+            id,
+            text: "正在思考...".into(),
+            is_user: false,
+            table: None,
+            temp_id: None,
+            status: ActionStatus::Loading,
+            image: None,
+            pending_code: None,
+            backup_path: None,
+        }
+    }
 }
 
-/// Ai Model Config
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ModelProfile {
     pub id: String,
-    pub name: String, // User set name，like "My DeepSeek"
+    pub name: String,
     pub base_url: String,
+    pub model_id: String,
     pub api_key: String,
-    pub model_id: String, // API param used model name，like "moonshot-v1-8k"
 }
 
 impl ModelProfile {
     pub fn new() -> Self {
         Self {
-            id: Uuid::new_v4().to_string(),
-            name: "新模型配置".to_string(),
-            base_url: "https://api.openai.com/v1".to_string(),
-            api_key: "".to_string(),
-            model_id: "gpt-3.5-turbo".to_string(),
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "New Profile".into(),
+            base_url: "https://api.openai.com/v1".into(),
+            model_id: "gpt-3.5-turbo".into(),
+            api_key: "".into(),
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct AppConfig {
     pub profiles: Vec<ModelProfile>,
     pub active_profile_id: Option<String>,
+    pub custom_prompt: Option<String>,
 }
 
-impl Default for AppConfig {
-    fn default() -> Self {
-        // Default create Moonshot config
+impl AppConfig {
+    pub fn default() -> Self {
         let default_profile = ModelProfile {
-            id: Uuid::new_v4().to_string(),
-            name: "Moonshot Kimi".to_string(),
-            base_url: "https://api.moonshot.cn/v1".to_string(),
-            api_key: "".to_string(),
-            model_id: "moonshot-v1-8k".to_string(),
+            id: "default".into(),
+            name: "Moonshot".into(),
+            base_url: "https://api.moonshot.cn/v1".into(),
+            model_id: "moonshot-v1-8k".into(),
+            api_key: "".into(),
         };
-
         Self {
-            active_profile_id: Some(default_profile.id.clone()),
-            profiles: vec![default_profile],
+            profiles: vec![default_profile.clone()],
+            active_profile_id: Some("default".into()),
+            custom_prompt: None,
         }
     }
-}
 
-/// API Request
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ChatRequest {
-    pub model: String,
-    pub messages: Vec<MessageApi>,
-}
-
-/// Message Api
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct MessageApi {
-    pub role: String,
-    pub content: String,
-}
-
-#[derive(Deserialize, Clone, Debug)]
-pub struct ChatResponse {
-    pub choices: Vec<Choice>,
-}
-
-#[derive(Deserialize, Clone, Debug)]
-pub struct Choice {
-    pub message: MessageApi,
-}
-
-// AI replay struct define
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct AiReply {
-    pub reply_type: String, // "code" or "chat"
-    pub content: String,    // code or chat text
+    /// 获取当前激活的模型配置
+    pub fn active_profile(&self) -> ModelProfile {
+        if let Some(id) = &self.active_profile_id {
+            if let Some(p) = self.profiles.iter().find(|p| &p.id == id) {
+                return p.clone();
+            }
+        }
+        self.profiles
+            .first()
+            .cloned()
+            .unwrap_or_else(|| ModelProfile::new())
+    }
 }

@@ -398,45 +398,6 @@ body {
     box-shadow: none;
 }
 
-
-/* 侧边栏 */
-.sidebar {
-    width: 60px;
-    background: #fafafa;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding-top: 16px;
-    border-right: 2px solid #f0f0f0;
-}
-
-.sidebar-btn {
-    width: 40px;
-    height: 40px;
-    border-radius: 8px;
-    margin-bottom: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    font-size: 20px;
-    color: #ccc;
-    border: 2px solid transparent;
-    transition: all 0.2s;
-}
-
-.sidebar-btn:hover {
-    color: #000;
-    border-color: #ddd;
-}
-
-.sidebar-btn.active {
-    background: #000;
-    color: #fff;
-    border-color: #000;
-    box-shadow: 2px 2px 0px rgba(0, 0, 0, 0.2);
-}
-
 /* 内容区 */
 .content-area {
     flex: 1;
@@ -445,6 +406,7 @@ body {
     background: #fff;
     position: relative;
     overflow: hidden;
+    min-height: 0;
 }
 
 /* 拖拽遮罩 */
@@ -483,6 +445,7 @@ body {
     flex-direction: column;
     /* 增加消息之间的间距 */
     gap: 16px;
+    min-height: 0;
 
     /* 顺便美化一下滚动条 (Chrome/Edge) */
     &::-webkit-scrollbar {
