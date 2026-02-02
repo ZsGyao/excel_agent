@@ -375,7 +375,6 @@ fn App() -> Element {
         if let Some(code) = pending_code_opt {
             spawn(async move {
                 let res: anyhow::Result<String, String> = run_python_code(&code).await;
-
                 let mut msgs = messages.write();
                 if let Some(msg) = msgs.get_mut(msg_id) {
                     match res {
@@ -387,7 +386,6 @@ fn App() -> Element {
                         }
                         Err(e) => {
                             msg.status = ActionStatus::Error(e.clone());
-                            msg.text.push_str(&format!("\n\n❌ 错误:\n{}", e));
                             // 触发修复
                             let current_retries = *retry_count.read();
                             if current_retries < MAX_RETRIES {

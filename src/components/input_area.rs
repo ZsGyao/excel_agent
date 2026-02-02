@@ -1,7 +1,7 @@
 use crate::models::{ActionStatus, AppConfig, ChatMessage};
 use crate::services::ai;
 use crate::services::config::save_config;
-use crate::services::python::get_excel_info;
+use crate::services::python::get_excel_summary;
 use dioxus::prelude::*;
 
 fn extract_python_code(text: &str) -> Option<String> {
@@ -23,6 +23,19 @@ fn extract_python_code(text: &str) -> Option<String> {
         }
     }
     None
+}
+
+// 从文本中移除代码块，只保留对话文字
+fn remove_code_block(text: &str) -> String {
+    if let Some(start) = text.find("```") {
+        if let Some(end) = text[start + 3..].find("```") {
+            let end_pos = start + 3 + end + 3;
+            let before = &text[..start];
+            let after = &text[end_pos..];
+            return format!("{}{}", before, after).trim().to_string();
+        }
+    }
+    text.to_string()
 }
 
 #[component]
@@ -64,30 +77,38 @@ pub fn InputArea(
             let cfg = config.read().clone();
 
             // 构建上下文
-            let ctx = if !file.is_empty() {
-                let info = get_excel_info(&file).await;
-                Some(format!("Target: r\"{}\"\nInfo: {}", file, info))
+            let context_data = if !file.is_empty() {
+                let summary = get_excel_summary(&file).await;
+                Some(format!(
+                    "Target File Path: r\"{}\"\n\nData Context (First 5 rows):\n{}",
+                    file, summary
+                ))
             } else {
                 None
             };
 
-            // 如果是修复，修改 Prompt
-            let prompt = if is_auto_fix {
-                format!(
-                    "Previous code failed:\n{}\n\nFix it and output full code.",
-                    prompt_text
-                )
+            // 构造最终 Prompt
+            let final_prompt = if is_auto_fix {
+                // 如果是修复，把上下文也带上，防止 AI 忘了数据长啥样
+                format!("Previous code failed.\nContext:\n{:?}\n\nUser Request: {}\n\nFix the code based on the context.", context_data, prompt_text)
             } else {
                 prompt_text
             };
 
-            match ai::call_ai(&cfg, &prompt, ctx).await {
+            // 调用 AI (注意：这里把 context_data 传进去，ai::call_ai 内部会拼接到 System Prompt 里)
+            match ai::call_ai(&cfg, &final_prompt, context_data).await {
                 Ok(content) => {
                     let mut msgs = messages.write();
                     if let Some(code) = extract_python_code(&content) {
                         // === 是代码 ===
-                        let clean_text = content.replace("```python", "").replace("```", "");
-                        msgs[ai_id].text = clean_text;
+                        let clean_text = remove_code_block(&content);
+                        // 如果移除后为空，给一个默认提示
+                        msgs[ai_id].text = if clean_text.is_empty() {
+                            "已生成操作代码，请确认执行：".to_string()
+                        } else {
+                            clean_text
+                        };
+
                         msgs[ai_id].pending_code = Some(code);
 
                         if is_auto_fix {

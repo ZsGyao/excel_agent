@@ -103,50 +103,53 @@ pub async fn run_python_code(code: &str) -> Result<String, String> {
     }
 }
 
-/// 快速读取 Excel 表头信息 (用于 AI 上下文)
-pub async fn get_excel_info(file_path: &str) -> String {
+/// 获取 Excel 数据概览 (表头 + 前5行)
+pub async fn get_excel_summary(file_path: &str) -> String {
     if !Path::new(file_path).exists() {
         return "文件不存在".to_string();
     }
-
     let file_path = file_path.to_string();
 
     let result = tokio::task::spawn_blocking(move || {
-        Python::with_gil(|py| {
-            // 仅读取 columns，nrows=0 极速模式
+        Python::with_gil(|py| -> String {
+            // 使用 pandas 快速读取前 5 行，并转为 markdown 格式字符串
             let code = format!(
                 r#"
 import pandas as pd
 try:
-    df = pd.read_excel(r"{}", nrows=0)
-    print(f"Columns: {{list(df.columns)}}")
+    df = pd.read_excel(r"{}", nrows=5)
+    # 获取列名和类型
+    info = "Columns:\n"
+    for col in df.columns:
+        info += f"- {{col}} ({{df[col].dtype}})\n"
+    
+    info += "\nData Preview (First 5 rows):\n"
+    info += df.to_markdown(index=False)
+    print(info)
 except Exception as e:
-    print(f"Read Info Error: {{e}}")
+    print(f"无法读取数据预览: {{e}}")
 "#,
                 file_path
             );
 
-            let sys = py.import("sys").ok()?;
-            let io = py.import("io").ok()?;
-            let stdout_capture = io.call_method0("StringIO").ok()?;
-            sys.setattr("stdout", stdout_capture).ok()?;
+            let sys = py.import("sys").unwrap();
+            let io = py.import("io").unwrap();
+            let stdout = io.call_method0("StringIO").unwrap();
+            sys.setattr("stdout", stdout).unwrap();
 
             let _ = py.run(&code, None, None);
 
-            let output = stdout_capture
-                .call_method0("getvalue")
-                .ok()?
-                .extract::<String>()
-                .ok()?;
-            Some(output.trim().to_string())
+            if let Ok(out) = stdout.call_method0("getvalue") {
+                if let Ok(s) = out.extract::<String>() {
+                    return s;
+                }
+            }
+            "读取失败".to_string()
         })
     })
     .await;
 
-    match result {
-        Ok(Some(info)) => info,
-        _ => "无法读取文件信息".to_string(),
-    }
+    result.unwrap_or_else(|_| "系统错误".to_string())
 }
 
 /// 备份文件 (撤销功能依赖)
