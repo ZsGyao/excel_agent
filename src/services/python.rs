@@ -152,21 +152,115 @@ except Exception as e:
     result.unwrap_or_else(|_| "系统错误".to_string())
 }
 
-/// 备份文件 (撤销功能依赖)
-pub fn backup_file(file_path: &str) -> Option<String> {
-    let path = Path::new(file_path);
-    if !path.exists() {
-        return None;
-    }
+// 热备份 (SaveCopyAs)
+// 直接调用 Excel API 保存当前内存快照，解决“撤销无效”问题
+pub async fn create_live_backup(target_path: &str) -> Result<String, String> {
+    let backup_path = format!("{}.bak", target_path);
+    let code = format!(
+        r#"
+import xlwings as xw
+import os
+import shutil
 
-    let backup_path = format!("{}.bak", file_path);
-    match fs::copy(file_path, &backup_path) {
-        Ok(_) => Some(backup_path),
-        Err(e) => {
-            println!("备份失败: {}", e);
-            None
-        }
+target_file = r"{}"
+backup_file = r"{}"
+
+try:
+    # 1. 尝试连接活跃的 Workbook
+    wb = None
+    target_name = os.path.basename(target_file).lower()
+    try:
+        wb = xw.books[os.path.basename(target_file)]
+    except:
+        for app in xw.apps:
+            for book in app.books:
+                if book.fullname.lower() == target_file.lower():
+                    wb = book; break
+            if wb: break
+    
+    if wb:
+        # 🔥 关键：使用 SaveCopyAs 保存当前内存状态 (包含未保存的修改)
+        # Windows Excel API: Workbook.SaveCopyAs
+        wb.api.SaveCopyAs(backup_file)
+        print("Live Backup Created")
+    else:
+        # 降级：如果文件没打开，直接复制硬盘文件
+        shutil.copy2(target_file, backup_file)
+        print("Static Backup Created")
+
+except Exception as e:
+    print(f"Backup Error: {{e}}")
+    raise e
+"#,
+        target_path, backup_path
+    );
+
+    match run_python_code(&code).await {
+        Ok(_) => Ok(backup_path),
+        Err(e) => Err(e),
     }
+}
+
+// 热撤销逻辑
+// 如果文件被锁，使用 xlwings 打开备份文件，把内容复制回当前文件
+pub async fn run_hot_undo(target_path: &str, backup_path: &str) -> Result<String, String> {
+    let code = format!(
+        r#"
+import xlwings as xw
+import os
+
+target_file = r"{}"
+backup_file = r"{}"
+
+try:
+    # 1. 连接到当前打开的目标文件
+    wb_target = None
+    target_name = os.path.basename(target_file).lower()
+    try:
+        wb_target = xw.books[os.path.basename(target_file)]
+    except:
+        for app in xw.apps:
+            for book in app.books:
+                if book.fullname.lower() == target_file.lower():
+                    wb_target = book; break
+            if wb_target: break
+            
+    if not wb_target:
+        raise Exception("目标文件未打开，无法进行热撤销")
+
+    # 2. 后台打开备份文件
+    # 使用同一个 app 打开，方便 sheet 复制
+    app = wb_target.app
+    wb_backup = app.books.open(backup_file)
+    
+    # 3. 恢复当前激活的 Sheet
+    target_sheet = wb_target.sheets.active
+    sheet_name = target_sheet.name
+    
+    # 在备份里找同名 Sheet
+    sheet_names = [s.name for s in wb_backup.sheets]
+    if sheet_name in sheet_names:
+        src_sheet = wb_backup.sheets[sheet_name]
+        
+        # 清空目标并复制
+        target_sheet.clear() 
+        src_sheet.used_range.copy(target_sheet.range('A1'))
+        
+        print(f"✨ 成功！已从备份恢复 Sheet: {{sheet_name}}")
+    else:
+        print(f"⚠️ 警告：备份文件中找不到 Sheet: {{sheet_name}}，无法恢复")
+
+    # 4. 关闭备份文件 (不保存)
+    wb_backup.close()
+
+except Exception as e:
+    print(f"❌ 热撤销失败: {{e}}")
+    raise e
+"#,
+        target_path, backup_path
+    );
+
+    run_python_code(&code).await
 }
 
 /// 恢复文件

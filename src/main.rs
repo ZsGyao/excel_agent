@@ -17,7 +17,7 @@ use dioxus::prelude::*;
 use crate::components::dock_capsule::DockCapsule;
 use crate::models::{ActionStatus, WindowMode};
 use crate::services::config::load_config;
-use crate::services::python::{backup_file, restore_file, run_python_code};
+use crate::services::python::{create_live_backup, restore_file, run_hot_undo, run_python_code};
 use components::{chat_view::ChatView, input_area::InputArea, settings::Settings};
 use models::ChatMessage;
 
@@ -354,42 +354,53 @@ fn App() -> Element {
 
     // 🔥 1. Confirm 回调
     let mut on_confirm = move |msg_id: usize| {
-        // 🔥 修复 E0503: 获取值后立即释放锁，不要持有 MutexGuard 跨 await
-        let pending_code_opt = {
+        // 1. 获取指令，但不在这里备份（因为 backup_file 现在是 async 的）
+        let (code_opt, target_file) = {
             let mut msgs = messages.write();
             let msg = &mut msgs[msg_id];
-            if let Some(code) = msg.pending_code.clone() {
+            let code = msg.pending_code.clone();
+            if code.is_some() {
                 msg.status = ActionStatus::Running;
-                // 备份文件
-                let target_file = last_file_path();
-                if !target_file.is_empty() {
-                    // 🔥 修复 E0425: backup_file 已引入
-                    msg.backup_path = backup_file(&target_file);
-                }
-                Some(code)
-            } else {
-                None
             }
+            (code, last_file_path())
         };
 
-        if let Some(code) = pending_code_opt {
+        if let Some(code) = code_opt {
             spawn(async move {
-                let res: anyhow::Result<String, String> = run_python_code(&code).await;
+                // 2. 异步创建【热备份】 (SaveCopyAs)
+                // 这会保存当前的内存状态，解决 "Undo 无效" 问题
+                let backup_path = if !target_file.is_empty() {
+                    match create_live_backup(&target_file).await {
+                        Ok(p) => Some(p),
+                        Err(e) => {
+                            println!("⚠️ 备份失败: {}", e);
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                // 3. 将备份路径写入消息
+                if let Some(bp) = backup_path {
+                    messages.write()[msg_id].backup_path = Some(bp);
+                }
+
+                // 4. 执行 AI 代码
+                let res = run_python_code(&code).await;
                 let mut msgs = messages.write();
                 if let Some(msg) = msgs.get_mut(msg_id) {
                     match res {
                         Ok(out) => {
                             msg.status = ActionStatus::Success;
                             msg.text.push_str(&format!("\n\n✨ 结果:\n{}", out));
-                            // 成功后，重置重试计数器
                             retry_count.set(0);
                         }
                         Err(e) => {
                             msg.status = ActionStatus::Error(e.clone());
-                            // 触发修复
+                            msg.text.push_str(&format!("\n\n❌ 错误:\n{}", e));
                             let current_retries = *retry_count.read();
                             if current_retries < MAX_RETRIES {
-                                // 没超过上限，继续自动修复
                                 retry_count += 1;
                                 msg.text.push_str(&format!(
                                     "\n\n🔄 自动修复中 (尝试 {}/{})...",
@@ -398,11 +409,11 @@ fn App() -> Element {
                                 ));
                                 error_fix_signal.set(Some(e));
                             } else {
-                                // 超过上限，放弃治疗
-                                msg.text.push_str(&format!("\n\n🛑 已达到最大重试次数 ({})，停止自动修复。请检查提示词或手动修改代码。", MAX_RETRIES));
-                                // 重置计数器，等待用户下次手动操作
+                                msg.text.push_str(&format!(
+                                    "\n\n🛑 已达到最大重试次数 ({})，停止自动修复。",
+                                    MAX_RETRIES
+                                ));
                                 retry_count.set(0);
-                                // 注意：这里不再设置 error_fix_signal，循环中止
                             }
                         }
                     }
@@ -432,19 +443,51 @@ fn App() -> Element {
     };
 
     let on_undo = move |id: usize| {
-        let mut msgs = messages.write();
-        if let Some(msg) = msgs.get_mut(id) {
-            if let Some(bk) = &msg.backup_path {
-                let target = last_file_path();
-                // 🔥 修复 E0425: restore_file 已引入
-                match restore_file(&target, bk) {
+        // 先获取必要信息，避免在 async 块中持有 MutexGuard
+        let (backup_path, target_path) = {
+            let msgs = messages.read();
+            let msg = &msgs[id];
+            (msg.backup_path.clone(), last_file_path())
+        };
+
+        if let Some(bk) = backup_path {
+            // 设置状态为 "正在撤销" (可选)
+            spawn(async move {
+                // 1. 尝试物理恢复
+                match restore_file(&target_path, &bk) {
                     Ok(_) => {
-                        msg.status = ActionStatus::Undone;
-                        msg.text.push_str("\n\n↩️ 已撤销");
+                        let mut msgs = messages.write();
+                        if let Some(msg) = msgs.get_mut(id) {
+                            msg.status = ActionStatus::Undone;
+                            msg.text.push_str("\n\n↩️ 已撤销 (物理恢复)");
+                        }
                     }
-                    Err(e) => msg.text.push_str(&format!("\n❌ 撤销失败: {}", e)),
+                    Err(_) => {
+                        // 2. 失败了？尝试热恢复 (Hot Undo)
+                        let mut msgs = messages.write();
+                        if let Some(msg) = msgs.get_mut(id) {
+                            msg.text.push_str("\n⏳ 文件被占用，尝试热撤销...");
+                        }
+                        drop(msgs); // 释放锁
+
+                        match run_hot_undo(&target_path, &bk).await {
+                            Ok(_) => {
+                                let mut msgs = messages.write();
+                                if let Some(msg) = msgs.get_mut(id) {
+                                    msg.status = ActionStatus::Undone;
+                                    msg.text.push_str("\n✨ 热撤销成功！");
+                                }
+                            }
+                            Err(e) => {
+                                let mut msgs = messages.write();
+                                if let Some(msg) = msgs.get_mut(id) {
+                                    msg.text.push_str(&format!("\n❌ 撤销彻底失败: {}", e));
+                                }
+                            }
+                        }
+                    }
                 }
-            }
+            });
         }
     };
 
