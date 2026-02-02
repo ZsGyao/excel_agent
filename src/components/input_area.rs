@@ -1,5 +1,6 @@
 use crate::models::{ActionStatus, AppConfig, ChatMessage};
 use crate::services::ai;
+use crate::services::config::save_config;
 use crate::services::python::get_excel_info;
 use dioxus::prelude::*;
 
@@ -136,26 +137,63 @@ pub fn InputArea(
         perform_request(text, false);
     };
 
+    // 切换模型逻辑
+    let mut switch_model = move || {
+        let mut cfg = config.read().clone();
+        let profiles = &cfg.profiles;
+        if profiles.is_empty() {
+            return;
+        }
+
+        // 找到当前模型索引，切换到下一个
+        let current_idx = profiles
+            .iter()
+            .position(|p| Some(&p.id) == cfg.active_profile_id.as_ref())
+            .unwrap_or(0);
+        let next_idx = (current_idx + 1) % profiles.len();
+        cfg.active_profile_id = Some(profiles[next_idx].id.clone());
+
+        config.set(cfg.clone());
+        save_config(&cfg); // 持久化保存
+    };
+
+    let active_model_name = config.read().active_profile().name.clone();
+
     rsx! {
+        // div 的 class 已经在 main.rs 的容器中被控制了 (center-mode vs chat-mode)
         div { class: "input-container",
-            textarea {
-                class: "chat-input",
-                value: "{input_text}",
-                oninput: move |evt| input_text.set(evt.value()),
-                onkeydown: move |evt| {
-                    if evt.key() == Key::Enter && !evt.modifiers().contains(Modifiers::SHIFT) {
-                        handle_send(());
-                    }
-                },
+            // 🔥 1. 上方工具栏：模型选择
+            div { class: "input-toolbar",
+                div {
+                    class: "model-selector",
+                    onclick: move |_| switch_model(),
+                    title: "点击切换模型",
+                    "🤖 {active_model_name} ▾"
+                }
             }
-            button {
-                class: "send-btn",
-                disabled: is_loading(),
-                onclick: move |_| handle_send(()),
-                if is_loading() {
-                    "..."
-                } else {
-                    "发送"
+
+            // 🔥 2. 下方输入框 + 按钮
+            div { class: "input-wrapper",
+                textarea {
+                    class: "chat-input",
+                    placeholder: "输入指令，例如：把 A1 标红...",
+                    value: "{input_text}",
+                    oninput: move |evt| input_text.set(evt.value()),
+                    onkeydown: move |evt| {
+                        if evt.key() == Key::Enter && !evt.modifiers().contains(Modifiers::SHIFT) {
+                            handle_send(());
+                        }
+                    },
+                }
+                button {
+                    class: "send-btn",
+                    disabled: is_loading(),
+                    onclick: move |_| handle_send(()),
+                    if is_loading() {
+                        "..."
+                    } else {
+                        "⬆"
+                    }
                 }
             }
         }

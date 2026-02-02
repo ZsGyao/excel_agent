@@ -450,6 +450,27 @@ fn App() -> Element {
         }
     };
 
+    // 🔥 1. 判断聊天状态
+    // 假设初始只有 1 条欢迎消息，当 > 1 时说明用户发话了
+    let has_started_chat = messages.read().len() > 1;
+    let content_mode_class = if has_started_chat {
+        "content-area chat-mode"
+    } else {
+        "content-area center-mode"
+    };
+
+    // 🔥 2. 获取文件名用于显示
+    let current_file = last_file_path();
+    let file_name = if !current_file.is_empty() {
+        Path::new(&current_file)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
+    } else {
+        String::new()
+    };
+
     rsx! {
         document::Stylesheet { href: asset!("/assets/main.css") }
 
@@ -500,21 +521,56 @@ fn App() -> Element {
                         evt.prevent_default();
                         is_dragging.set(false);
                         let files = evt.data().files();
-                        if let Some(first_file) = files.first() {}
+                        if let Some(first_file) = files.first() {
+                            let fname = first_file.name();
+                            let dir = std::env::current_dir().unwrap_or_default();
+                            let path = dir.join(&fname).to_string_lossy().to_string();
+                            last_file_path.set(path);
+                        }
                     },
 
-                    div { class: "content-area",
+                    // 🔥 3. 应用动态布局 Class
+                    div { class: "{content_mode_class}",
+
                         if is_dragging() {
                             div { class: "drag-overlay", "📂 投喂 Excel！" }
                         }
-                        ChatView {
-                            messages,
-                            last_file_path,
-                            on_confirm: on_manual_confirm,
-                            on_cancel,
-                            on_undo,
+
+                        // 🔥 4. 文件悬浮胶囊
+                        if !current_file.is_empty() {
+                            div { class: "file-pill-container",
+                                div { class: "file-pill",
+                                    span { "📊 {file_name}" }
+                                    span {
+                                        class: "close-file",
+                                        onclick: move |_| last_file_path.set(String::new()),
+                                        title: "移除文件",
+                                        "✕"
+                                    }
+                                }
+                            }
                         }
 
+                        // 聊天列表 (只有开始聊天后才显示)
+                        if has_started_chat {
+                            ChatView {
+                                messages,
+                                last_file_path,
+                                on_confirm,
+                                on_cancel,
+                                on_undo,
+                            }
+                        } else {
+                            // 🔥 5. 居中模式下的欢迎语 (代替之前的 ChatView)
+                            div { style: "text-align: center; margin-bottom: 30px; color: #666; animation: fadeIn 0.5s;",
+                                div { style: "font-size: 28px; font-weight: 900; color: #000; margin-bottom: 12px;",
+                                    "Excel AI Agent"
+                                }
+                                div { "拖入表格，开始分析" }
+                            }
+                        }
+
+                        // 输入区 (始终存在，位置由父容器 class 控制)
                         InputArea {
                             messages,
                             last_file_path,
