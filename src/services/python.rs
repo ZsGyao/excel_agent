@@ -3,6 +3,8 @@ use std::env;
 use std::fs;
 use std::path::Path;
 use std::sync::Once;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 static INIT: Once = Once::new();
 
@@ -56,6 +58,21 @@ pub fn init_python_env() {
         pyo3::prepare_freethreaded_python();
         println!("🐍 Python 解释器初始化完成");
     });
+}
+
+// 启动时清理备份文件夹
+pub fn cleanup_backups() {
+    let backup_dir = Path::new("backups");
+    // 如果存在，先删除整个目录（清空旧文件）
+    if backup_dir.exists() {
+        let _ = fs::remove_dir_all(backup_dir);
+    }
+    // 重新创建空目录
+    if let Err(e) = fs::create_dir_all(backup_dir) {
+        println!("⚠️ 无法创建备份目录: {}", e);
+    } else {
+        println!("✅ 备份目录已重置: backups/");
+    }
 }
 
 /// 异步运行 Python 代码 (xlwings 热更新的核心)
@@ -117,14 +134,25 @@ pub async fn get_excel_summary(file_path: &str) -> String {
                 r#"
 import pandas as pd
 try:
+    d# 只读取前5行，避免大文件卡死
     df = pd.read_excel(r"{}", nrows=5)
-    # 获取列名和类型
-    info = "Columns:\n"
+    
+    info = "Columns & Types:\n"
     for col in df.columns:
-        info += f"- {{col}} ({{df[col].dtype}})\n"
+        info += f"- {{col}}: {{df[col].dtype}}\n"
     
     info += "\nData Preview (First 5 rows):\n"
-    info += df.to_markdown(index=False)
+    
+    # 🔥 核心容错逻辑 🔥
+    try:
+        # 优先尝试 Markdown (需要 tabulate 库)
+        info += df.to_markdown(index=False)
+    except ImportError:
+        # 如果没装 tabulate，降级使用默认 string 格式
+        info += df.to_string(index=False)
+    except Exception as e:
+        info += f"[Preview Error: {{e}}]"
+
     print(info)
 except Exception as e:
     print(f"无法读取数据预览: {{e}}")
@@ -153,9 +181,28 @@ except Exception as e:
 }
 
 // 热备份 (SaveCopyAs)
-// 直接调用 Excel API 保存当前内存快照，解决“撤销无效”问题
 pub async fn create_live_backup(target_path: &str) -> Result<String, String> {
-    let backup_path = format!("{}.bak", target_path);
+    // 1. 确保目录存在 (虽然启动时创建了，但防一手被误删)
+    let backup_dir = env::current_dir().unwrap_or_default().join("backups");
+    if !backup_dir.exists() {
+        let _ = fs::create_dir_all(&backup_dir);
+    }
+
+    // 1. 生成唯一时间戳
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let file_name = Path::new(target_path)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy();
+
+    // 路径：<AppDir>/backups/large_test_data.xlsx.17023123.bak
+    let backup_path = backup_dir.join(format!("{}.{}.bak", file_name, timestamp));
+    // 转为绝对路径字符串传给 Python
+    let backup_path_str = backup_path.to_string_lossy().to_string();
+
     let code = format!(
         r#"
 import xlwings as xw
@@ -166,9 +213,8 @@ target_file = r"{}"
 backup_file = r"{}"
 
 try:
-    # 1. 尝试连接活跃的 Workbook
+    # 尝试连接活跃 Workbook
     wb = None
-    target_name = os.path.basename(target_file).lower()
     try:
         wb = xw.books[os.path.basename(target_file)]
     except:
@@ -179,12 +225,11 @@ try:
             if wb: break
     
     if wb:
-        # 🔥 关键：使用 SaveCopyAs 保存当前内存状态 (包含未保存的修改)
-        # Windows Excel API: Workbook.SaveCopyAs
+        # 保存内存快照
         wb.api.SaveCopyAs(backup_file)
         print("Live Backup Created")
     else:
-        # 降级：如果文件没打开，直接复制硬盘文件
+        # 降级：物理复制
         shutil.copy2(target_file, backup_file)
         print("Static Backup Created")
 
@@ -192,11 +237,11 @@ except Exception as e:
     print(f"Backup Error: {{e}}")
     raise e
 "#,
-        target_path, backup_path
+        target_path, backup_path_str
     );
 
     match run_python_code(&code).await {
-        Ok(_) => Ok(backup_path),
+        Ok(_) => Ok(backup_path_str), // 返回这个唯一的路径给 main.rs 存起来
         Err(e) => Err(e),
     }
 }

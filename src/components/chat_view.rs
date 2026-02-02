@@ -1,25 +1,14 @@
 use crate::models::{ActionStatus, ChatMessage};
 use dioxus::{document::eval, prelude::*};
 
-// 辅助：清洗文本
 fn clean_text(text: &str) -> String {
     let mut result = String::new();
     let mut in_code = false;
     for line in text.lines() {
-        if line.trim().starts_with("```") {
-            in_code = !in_code;
-            continue;
-        }
-        if !in_code {
-            result.push_str(line);
-            result.push('\n');
-        }
+        if line.trim().starts_with("```") { in_code = !in_code; continue; }
+        if !in_code { result.push_str(line); result.push('\n'); }
     }
-    result
-        .replace("下面是代码", "")
-        .replace("Here is the code", "")
-        .trim()
-        .to_string()
+    result.replace("下面是代码", "").replace("Here is the code", "").trim().to_string()
 }
 
 #[component]
@@ -30,21 +19,17 @@ pub fn ChatView(
     on_cancel: EventHandler<usize>,
     on_undo: EventHandler<usize>,
 ) -> Element {
-    // 自动滚动
     use_effect(move || {
         messages.read();
-        let _ = eval(
-            r#"setTimeout(() => {
+        let _ = eval(r#"setTimeout(() => {
             const el = document.getElementById('chat-scroll');
             if(el) el.scrollTop = el.scrollHeight;
-        }, 50);"#,
-        );
+        }, 50);"#);
     });
 
     let msgs = messages.read().clone();
 
-    // 🔥 核心修复：在 rsx! 外部预先处理好所有元素
-    // 这样彻底避免了宏内部嵌套过深导致的解析错误
+    // 预渲染
     let rendered_msgs = msgs.iter().map(|msg| {
         let msg_id = msg.id;
         let has_code = msg.pending_code.is_some();
@@ -53,7 +38,7 @@ pub fn ChatView(
         let display_text = clean_text(&msg.text);
         let bubble_class = if is_undone { "bubble undone-state" } else { "bubble" };
 
-        // 1. 构建底部交互栏
+        // 底部交互栏逻辑
         let bottom_actions = match msg.status {
             ActionStatus::WaitingConfirmation => rsx! {
                 div { style: "margin-top: 10px; border-top: 1px solid #eee; padding-top: 10px;",
@@ -74,6 +59,19 @@ pub fn ChatView(
                     }
                 }
             },
+            // 🔥 新增：报错状态下显示重试按钮，防止死胡同
+            ActionStatus::Error(_) => rsx! {
+                div { style: "margin-top: 10px; border-top: 1px solid #f8d7da; padding-top: 10px;",
+                    div { class: "btn-group",
+                        button {
+                            class: "confirm-btn",
+                            style: "background: #dc3545;", // 红色按钮
+                            onclick: move |_| on_confirm.call(msg_id),
+                            "🔄 重新尝试"
+                        }
+                    }
+                }
+            },
             ActionStatus::Success => {
                 if msg.backup_path.is_some() {
                     rsx! {
@@ -85,9 +83,7 @@ pub fn ChatView(
                             }
                         }
                     }
-                } else {
-                    rsx! {}
-                }
+                } else { rsx!{} }
             },
             ActionStatus::Undone => rsx! {
                 div { style: "margin-top: 8px; font-size: 11px; color: #999; font-style: italic;",
@@ -97,21 +93,20 @@ pub fn ChatView(
             _ => rsx! {}
         };
 
-        // 2. 返回单个消息气泡的 Element
         rsx! {
             div {
                 key: "{msg_id}",
                 class: if msg.is_user { "message msg-user" } else { "message msg-ai" },
 
                 div { class: "{bubble_class}",
-                    // A. 文本区域
+                    // 文本
                     if !display_text.is_empty() {
                         div { style: if is_undone { "white-space: pre-wrap; margin-bottom: 8px; text-decoration: line-through; opacity: 0.7;" } else { "white-space: pre-wrap; margin-bottom: 8px;" },
                             "{display_text}"
                         }
                     }
 
-                    // B. 思考过程 (代码 & 日志)
+                    // 思考过程
                     if !msg.is_user && (has_code || is_error) {
                         details {
                             class: "thinking-details",
@@ -143,7 +138,6 @@ pub fn ChatView(
                         }
                     }
 
-                    // C. 图片
                     if let Some(img) = &msg.image {
                         img {
                             class: "msg-image",
@@ -152,7 +146,6 @@ pub fn ChatView(
                         }
                     }
 
-                    // D. 底部交互
                     {bottom_actions}
                 }
             }
@@ -160,9 +153,6 @@ pub fn ChatView(
     });
 
     rsx! {
-        div { id: "chat-scroll", class: "chat-scroll",
-            // 直接渲染迭代器，干净清爽
-            {rendered_msgs}
-        }
+        div { id: "chat-scroll", class: "chat-scroll", {rendered_msgs} }
     }
 }

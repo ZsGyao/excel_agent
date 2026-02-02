@@ -30,6 +30,17 @@ fn main() {
     dioxus_logger::init(tracing::Level::INFO).expect("failed to init logger");
     services::python::init_python_env();
 
+    // 启动时清理（防止上次强杀残留）
+    services::python::cleanup_backups();
+    // 注册崩溃钩子（防止程序 Panic 时残留）
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        println!("💥 程序发生严重错误，正在紧急清理临时文件...");
+        services::python::cleanup_backups();
+        // 继续执行默认的报错打印
+        default_hook(info);
+    }));
+
     let icon_path = "assets/icon.png";
     let icon = load_icon(Path::new(icon_path));
 
@@ -62,6 +73,10 @@ fn main() {
     let config = Config::new().with_window(window_builder);
 
     LaunchBuilder::desktop().with_cfg(config).launch(App);
+
+    // 正常关闭时清理
+    println!("🛑 程序正常退出，正在清理临时文件...");
+    services::python::cleanup_backups();
 }
 
 fn load_icon(path: &Path) -> anyhow::Result<Icon> {
