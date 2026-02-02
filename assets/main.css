@@ -650,6 +650,27 @@ body {
     border-bottom-left-radius: 2px;
 }
 
+/* 已撤销/失效的消息气泡 */
+.bubble.undone-state {
+    background-color: #f5f5f5 !important;
+    /* 变灰 */
+    border-color: #e0e0e0 !important;
+    color: #999 !important;
+    box-shadow: none !important;
+    transition: all 0.3s ease;
+}
+
+.bubble.undone-state .thinking-summary {
+    background: #eee;
+    color: #aaa;
+}
+
+.bubble.undone-state .msg-image {
+    opacity: 0.5;
+    filter: grayscale(100%);
+    /* 图片变黑白 */
+}
+
 /* =========================================
    4. 设置界面 (独立大窗口) - 漫画风格
    ========================================= */

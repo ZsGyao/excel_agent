@@ -442,48 +442,70 @@ fn App() -> Element {
         }
     };
 
-    let on_undo = move |id: usize| {
-        // 先获取必要信息，避免在 async 块中持有 MutexGuard
-        let (backup_path, target_path) = {
+    // 级联回溯撤销
+    let on_undo = move |target_msg_id: usize| {
+        // 1. 获取必要信息 (避免在该 async块 中长时间持有锁)
+        let (backup_path, target_file) = {
             let msgs = messages.read();
-            let msg = &msgs[id];
-            (msg.backup_path.clone(), last_file_path())
+            if let Some(msg) = msgs.get(target_msg_id) {
+                (msg.backup_path.clone(), last_file_path())
+            } else {
+                (None, String::new())
+            }
         };
 
         if let Some(bk) = backup_path {
-            // 设置状态为 "正在撤销" (可选)
             spawn(async move {
-                // 1. 尝试物理恢复
-                match restore_file(&target_path, &bk) {
-                    Ok(_) => {
-                        let mut msgs = messages.write();
-                        if let Some(msg) = msgs.get_mut(id) {
-                            msg.status = ActionStatus::Undone;
-                            msg.text.push_str("\n\n↩️ 已撤销 (物理恢复)");
+                // 执行恢复逻辑 (优先物理恢复，失败则热恢复)
+                let restore_result = match restore_file(&target_file, &bk) {
+                    Ok(_) => Ok("物理恢复"),
+                    Err(_) => {
+                        // 物理失败，尝试热恢复
+                        match run_hot_undo(&target_file, &bk).await {
+                            Ok(_) => Ok("热撤销"),
+                            Err(e) => Err(e),
                         }
                     }
-                    Err(_) => {
-                        // 2. 失败了？尝试热恢复 (Hot Undo)
-                        let mut msgs = messages.write();
-                        if let Some(msg) = msgs.get_mut(id) {
-                            msg.text.push_str("\n⏳ 文件被占用，尝试热撤销...");
-                        }
-                        drop(msgs); // 释放锁
+                };
 
-                        match run_hot_undo(&target_path, &bk).await {
-                            Ok(_) => {
-                                let mut msgs = messages.write();
-                                if let Some(msg) = msgs.get_mut(id) {
+                // 更新 UI 状态：级联标记失效
+                let mut msgs = messages.write();
+
+                match restore_result {
+                    Ok(method) => {
+                        // 🔥 重点：从 target_id 开始，直到最后一条消息
+                        // 将所有 "Success" 的消息都标记为 "Undone"，因为文件已经回滚到了它们的过去
+                        let len = msgs.len();
+                        for i in target_msg_id..len {
+                            if let Some(msg) = msgs.get_mut(i) {
+                                // 只有处于成功状态的才需要标记为“已撤销”
+                                // 或者是正在运行的，也强制取消
+                                if matches!(
+                                    msg.status,
+                                    ActionStatus::Success | ActionStatus::Running
+                                ) {
                                     msg.status = ActionStatus::Undone;
-                                    msg.text.push_str("\n✨ 热撤销成功！");
+
+                                    // 仅在触发撤销的那条消息上显示详细提示
+                                    if i == target_msg_id {
+                                        msg.text.push_str(&format!(
+                                            "\n\n✨ 成功回溯 ({})！此操作及后续操作已撤销。",
+                                            method
+                                        ));
+                                    } else {
+                                        // 后续被波及的消息，只加一个简单标记
+                                        msg.text.push_str("\n\n(因历史回溯，此操作已失效)");
+                                    }
                                 }
                             }
-                            Err(e) => {
-                                let mut msgs = messages.write();
-                                if let Some(msg) = msgs.get_mut(id) {
-                                    msg.text.push_str(&format!("\n❌ 撤销彻底失败: {}", e));
-                                }
-                            }
+                        }
+
+                        // 也可以选择在底部插入一条新系统消息告诉用户
+                        // msgs.push(ChatMessage::new(msgs.len(), "🔄 时间线已重置到指定节点。", false));
+                    }
+                    Err(e) => {
+                        if let Some(msg) = msgs.get_mut(target_msg_id) {
+                            msg.text.push_str(&format!("\n❌ 回溯失败: {}", e));
                         }
                     }
                 }

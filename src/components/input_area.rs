@@ -189,7 +189,7 @@ pub fn InputArea(
                     class: "model-selector",
                     onclick: move |_| switch_model(),
                     title: "点击切换模型",
-                    "🤖 {active_model_name} ▾"
+                    "{active_model_name} ▾"
                 }
             }
 
