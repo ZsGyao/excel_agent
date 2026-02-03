@@ -8,3 +8,5 @@
 py_env
 *.xlsx
 large_test_data.xlsx.bak
+backups
+plan.md

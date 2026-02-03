@@ -1,3 +1,16 @@
+//! Python 服务模块
+//!
+//! 负责所有与 Python 解释器的交互，包括环境初始化、代码执行、
+//! 多文件上下文读取、以及基于 xlwings 的热备份与热撤销功能。
+//!
+//! # 架构变更说明 (Multi-Sheet Support)
+//!
+//! 1. **上下文读取**: 升级为全 Sheet 读取模式，AI 现在可以感知 Excel 中的所有工作表。
+//! 2. **热撤销**: 采用了 "Safe Restore" 策略。
+//!    - 以前: 仅恢复 Active Sheet。
+//!    - 现在: 遍历备份文件中的所有 Sheet 进行全量恢复。
+//!    - 安全机制: 恢复的内容标绿，新增的内容（不在备份中）标红并保留，绝不自动删除用户数据。
+
 use pyo3::prelude::*;
 use std::env;
 use std::fs;
@@ -6,11 +19,13 @@ use std::sync::Once;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
+/// 全局初始化锁，确保 Python 环境只初始化一次
 static INIT: Once = Once::new();
 
-/// 初始化 Python 环境
+/// 初始化嵌入式 Python 环境
 ///
-/// 确保 py_env 存在并设置环境变量，以便 xlwings 和 pandas 能正常运行。
+/// 会优先查找当前目录下的 `py_env` 文件夹。如果找不到，则回退到系统 Python。
+/// 设置 `PYTHONHOME` 和 `PYTHONPATH` 以确保第三方库 (pandas, xlwings) 可被加载。
 pub fn init_python_env() {
     INIT.call_once(|| {
         // 配置本地便携式 Python 环境
@@ -61,7 +76,9 @@ pub fn init_python_env() {
     });
 }
 
-/// 启动时清理备份文件夹
+/// 启动时清理旧的备份文件
+///
+/// 每次应用启动时调用，防止 `backups/` 文件夹无限膨胀。
 pub fn cleanup_backups() {
     let backup_dir = Path::new("backups");
     // 如果存在，先删除整个目录（清空旧文件）
@@ -77,6 +94,15 @@ pub fn cleanup_backups() {
 }
 
 /// 异步运行 Python 代码
+///
+/// # 功能增强 (Robustness Upgrade)
+///
+/// 为了防止 AI 生成的代码 "吞掉" 异常 (即 try...except print error)，
+/// 本函数实现了**双流检测**机制：
+/// 1. **Stderr 检测**: 捕获解释器级别的 Crash 和 traceback。
+/// 2. **Stdout 关键词检测**: 扫描输出中是否包含 "Error", "Exception", "❌" 等关键词。
+///
+/// 任何一种情况命中，都会返回 `Err`，从而触发上层的自动修复逻辑。
 pub async fn run_python_code(code: &str) -> Result<String, String> {
     let code = code.to_string();
 
@@ -85,32 +111,78 @@ pub async fn run_python_code(code: &str) -> Result<String, String> {
         Python::with_gil(|py| {
             let sys = py.import("sys").map_err(|e| e.to_string())?;
             let io = py.import("io").map_err(|e| e.to_string())?;
-            let stdout_capture = io.call_method0("StringIO").map_err(|e| e.to_string())?;
 
+            // 1. 分离标准输出 (stdout) 和 标准错误 (stderr)
+            let stdout_capture = io.call_method0("StringIO").map_err(|e| e.to_string())?;
+            let stderr_capture = io.call_method0("StringIO").map_err(|e| e.to_string())?;
             // 劫持标准输出
             sys.setattr("stdout", stdout_capture)
                 .map_err(|e| e.to_string())?;
             sys.setattr("stderr", stdout_capture)
                 .map_err(|e| e.to_string())?;
 
-            // 执行代码
+            // 2. 执行代码
             let run_result = py.run(&code, None, None);
 
-            // 获取输出
-            let output = stdout_capture
+            // 3. 提取输出
+            let stdout_str = stdout_capture
                 .call_method0("getvalue")
-                .map_err(|e| e.to_string())?
+                .unwrap()
                 .extract::<String>()
-                .map_err(|e| e.to_string())?;
+                .unwrap_or_default();
+            let stderr_str = stderr_capture
+                .call_method0("getvalue")
+                .unwrap()
+                .extract::<String>()
+                .unwrap_or_default();
 
-            match run_result {
-                Ok(_) => Ok(output),
-                Err(e) => {
-                    let traceback =
-                        format!("Python Runtime Error:\n{}\n\nOutput log:\n{}", e, output);
-                    Err(traceback)
+            // 4. 智能错误判断逻辑
+            // 情况 A: Python 解释器直接抛出异常 (硬错误)
+            if let Err(e) = run_result {
+                let full_err = format!(
+                    "🐍 Runtime Exception:\n{}\n\n📝 Stderr Trace:\n{}",
+                    e, stderr_str
+                );
+                return Err(full_err);
+            }
+
+            // 情况 B: 检查 Stderr 是否包含严重错误关键词
+            if !stderr_str.trim().is_empty() {
+                let lower_err = stderr_str.to_lowercase();
+                if lower_err.contains("error")
+                    || lower_err.contains("exception")
+                    || lower_err.contains("traceback")
+                {
+                    // 如果 stderr 里有明显的错误词，视为失败
+                    return Err(format!("⚠️ Detected Error in Stderr:\n{}", stderr_str));
                 }
             }
+
+            // 情况 C: 检查 Stdout 是否包含“软错误”关键词 (AI 吞掉了异常 print 出来的情况)
+            let lower_out = stdout_str.to_lowercase();
+            // 关键词黑名单：只要出现这些词，就认为脚本执行结果是不符合预期的
+            let error_keywords = [
+                "error:",          // 通用错误
+                "exception:",      // 异常
+                "traceback (most", // 堆栈
+                "failed to",       // 失败
+                "attributeerror",  // 常见属性错误
+                "keyerror",        // 键错误
+                "valueerror",      // 值错误
+                "not found",       // 文件未找到
+                "❌",              // AI 习惯用的 emoji
+            ];
+
+            for kw in error_keywords {
+                if lower_out.contains(kw) {
+                    // 发现疑似错误，返回 Err 触发重试
+                    // 把 stdout 原样返回作为错误信息，让 AI 看到它打印了什么
+                    return Err(stdout_str);
+                }
+            }
+
+            // 一切正常
+            Ok(stdout_str)
         })
     })
     .await;
@@ -121,10 +193,14 @@ pub async fn run_python_code(code: &str) -> Result<String, String> {
     }
 }
 
-/// 🔥 多文件上下文生成
+/// 读取多文件上下文 (Multi-Sheet Context)
 ///
-/// 遍历传入的所有文件路径，依次读取前5行，并拼接成一个大的 Markdown 上下文。
-/// 这样 AI 就能知道 "File A 有这些列，File B 有那些列"。
+/// # 架构变更 (Multi-Sheet Upgrade)
+///
+/// * `pd.read_excel(path, sheet_name=None, nrows=3)` -> 读取所有表。
+///
+/// 这让 AI 拥有了"上帝视角"，能看到 Excel 里的所有工作表结构，
+/// 从而支持跨表查询、多表汇总等复杂操作。
 pub async fn get_multi_file_summary(file_paths: Vec<String>) -> String {
     if file_paths.is_empty() {
         return String::new();
@@ -132,9 +208,9 @@ pub async fn get_multi_file_summary(file_paths: Vec<String>) -> String {
 
     let result = tokio::task::spawn_blocking(move || {
         Python::with_gil(|py| -> String {
-            // 动态生成 Python 代码，循环读取列表
-            let paths_repr = format!("{:?}", file_paths); // 转为 Python List 字符串
+            let paths_repr = format!("{:?}", file_paths);
 
+            // [MODIFIED] Python 脚本：遍历读取所有 Sheet
             let code = format!(
                 r#"
 import pandas as pd
@@ -151,27 +227,45 @@ for path in file_paths:
     final_report += f"\n=== File: {{filename}} ===\nPath: {{path}}\n"
     
     try:
-        df = pd.read_excel(path, nrows=5)
-        info = "Columns & Types:\n"
-        for col in df.columns:
-            info += f"- {{col}}: {{df[col].dtype}}\n"
-        info += "\nPreview:\n"
-        try:
-            info += df.to_markdown(index=False)
-        except ImportError:
-            info += df.to_string(index=False)
-        except Exception:
-            info += "[Preview Error]"
+        # [NEW] sheet_name=None 表示读取字典 {{sheet_name: df}}
+        # nrows=3 限制行数，避免 Token 爆炸，但足以展示结构
+        all_sheets = pd.read_excel(path, sheet_name=None, nrows=3) 
         
-        final_report += info + "\n" + "-"*30 + "\n"
+        if not all_sheets:
+            final_report += "(Empty Excel File)\n"
+            continue
+
+        for sheet_name, df in all_sheets.items():
+            final_report += f"\n[Sheet: {{sheet_name}}]\n"
+            
+            # 生成列名和类型摘要
+            col_info = []
+            for col in df.columns:
+                dtype = str(df[col].dtype)
+                col_info.append(f"{{col}}({{dtype}})")
+            info = "Columns: " + ", ".join(col_info) + "\n"
+            
+            # 生成数据预览 (Markdown 优先)
+            try:
+                info += df.to_markdown(index=False)
+            except ImportError:
+                info += df.to_string(index=False)
+            except Exception:
+                info += "[Preview generation failed]"
+                
+            final_report += info + "\n"
+            
     except Exception as e:
         final_report += f"Error reading file: {{e}}\n"
-
+        
+    final_report += "-"*30 + "\n"
+    
 print(final_report)
 "#,
                 paths_repr
             );
 
+            // 标准的 Python 执行与 Stdout 捕获流程
             let sys = match py.import("sys") {
                 Ok(v) => v,
                 Err(_) => return "Sys import failed".into(),
@@ -184,10 +278,10 @@ print(final_report)
                 Ok(v) => v,
                 Err(_) => return "StringIO failed".into(),
             };
+
             if sys.setattr("stdout", stdout).is_err() {
                 return "Set stdout failed".into();
             }
-
             let _ = py.run(&code, None, None);
 
             if let Ok(out) = stdout.call_method0("getvalue") {
@@ -200,14 +294,13 @@ print(final_report)
     })
     .await;
 
-    // 如果 Python 内部失败返回 None，或者线程失败，都返回默认提示
     result.unwrap_or_else(|_| "系统错误".to_string())
 }
 
-/// 批量热备份
+/// 批量创建热备份
 ///
-/// 针对传入的所有文件，依次调用 Excel SaveCopyAs。
-/// 返回：Vec<(原路径, 备份路径)>
+/// 使用 `shutil.copy2` 进行物理文件复制。
+/// 这天然支持多 Sheet，因为它复制的是整个 `.xlsx` 文件。
 pub async fn create_batch_backups(target_paths: Vec<String>) -> Vec<(String, String)> {
     let mut backups = Vec::new();
     let backup_dir = env::current_dir().unwrap_or_default().join("backups");
@@ -274,11 +367,18 @@ except:
     backups
 }
 
-/// 🔥 批量热撤销
+/// 批量热撤销 (Safe Plan B & Visual Audit)
 ///
-/// 接收一组 (原路径, 备份路径) 的列表，依次恢复。
+/// # 架构变更 (Safe Undo Upgrade)
+///
+/// * **旧逻辑**: 仅根据 Active Sheet 名字去备份里找同名表并覆盖。
+/// * **新逻辑**: **全量扫描 + 安全策略**。
+///     1.  遍历备份文件里的**所有** Sheet。
+///     2.  如果目标里有同名 Sheet -> 覆盖恢复 (标记为**绿色**)。
+///     3.  如果目标里没有 -> 新建并恢复 (标记为**绿色**)。
+///     4.  **关键**: 如果目标里多出了 Sheet (无论是 AI 建的还是用户建的) -> **绝不删除**，但标记为**红色**并提示用户。
+///     5.  **性能优化**: 开启 `screen_updating = False`，加速多表操作。
 pub async fn run_batch_hot_undo(restore_pairs: Vec<(String, String)>) -> Result<String, String> {
-    // 构造一个 Python 列表传入，在 Python 端循环处理，减少进程交互开销
     let pairs_repr = format!("{:?}", restore_pairs);
 
     let code = format!(
@@ -286,14 +386,12 @@ pub async fn run_batch_hot_undo(restore_pairs: Vec<(String, String)>) -> Result<
 import xlwings as xw
 import os
 
-# list of (target, backup)
 pairs = {}
-
 log = []
 
 for target_file, backup_file in pairs:
     try:
-        # 1. 找目标 Workbook
+        # 1. 尝试连接已打开的 Excel 实例
         wb_target = None
         try:
             wb_target = xw.books[os.path.basename(target_file)]
@@ -305,34 +403,78 @@ for target_file, backup_file in pairs:
                 if wb_target: break
         
         if not wb_target:
-            log.append(f"⚠️ 跳过 {{os.path.basename(target_file)}}: 未打开")
+            log.append(f"⚠️ 跳过 {{os.path.basename(target_file)}}: 文件未打开")
             continue
 
-        # 2. 打开备份并恢复
         app = wb_target.app
-        wb_backup = app.books.open(backup_file)
         
-        # 恢复当前激活 Sheet (简化版，生产环境可能需要恢复所有 Sheet)
-        target_sheet = wb_target.sheets.active
-        sheet_name = target_sheet.name
+        # [MODIFIED] 性能优化: 冻结屏幕刷新，大幅提升多表操作速度
+        app.screen_updating = False
+        app.display_alerts = False
         
-        found = False
-        for s in wb_backup.sheets:
-            if s.name == sheet_name:
-                target_sheet.clear() 
-                s.used_range.copy(target_sheet.range('A1'))
-                found = True
-                break
-        
-        wb_backup.close()
-        
-        if found:
-            log.append(f"✅ 已恢复 {{os.path.basename(target_file)}}")
-        else:
-            log.append(f"⚠️ {{os.path.basename(target_file)}} 恢复失败: Sheet不匹配")
+        try:
+            # 2. 后台打开备份文件
+            wb_backup = app.books.open(backup_file)
+            
+            restored_list = []
+            
+            # 3. [NEW] 核心循环: 以备份文件为“真理”，强制还原所有旧数据
+            for s_bak in wb_backup.sheets:
+                s_name = s_bak.name
+                
+                # 尝试在目标中获取同名 Sheet
+                try:
+                    s_tgt = wb_target.sheets[s_name]
+                except:
+                    # [NEW] 复活逻辑: 如果目标里没有(被误删)，则新建并放到最后
+                    s_tgt = wb_target.sheets.add(name=s_name, after=wb_target.sheets[-1])
+                
+                # 暴力恢复内容: 清空 -> 全量复制
+                s_tgt.clear()
+                s_bak.used_range.copy(s_tgt.range('A1'))
+                
+                # [NEW] 视觉标记: 恢复成功的表标为绿色 (ColorIndex: 4 或 RGB)
+                try: 
+                    # 绿色，代表 "Safe / Restored"
+                    s_tgt.api.Tab.Color = 5296274 
+                except: pass
+                
+                restored_list.append(s_name)
+            
+            # 4. [NEW] 审计逻辑: 检查多余的 Sheet (Safe Mode)
+            # 我们绝不自动删除用户可能新建的表，只做标记
+            tgt_sheets = [s.name for s in wb_target.sheets]
+            bak_sheets = [s.name for s in wb_backup.sheets]
+            
+            # 计算差集: 目标有但备份没有的表
+            extra_sheets = list(set(tgt_sheets) - set(bak_sheets))
+            
+            # [NEW] 视觉标记: 多余的表标为红色 (Danger / Check Needed)
+            for extra in extra_sheets:
+                try:
+                    # 红色，代表 "Attention Needed"
+                    wb_target.sheets[extra].api.Tab.Color = 255 
+                except: pass
+
+            wb_backup.close()
+            
+            # 5. 生成用户报告
+            msg = f"✅ 已回溯 {{os.path.basename(target_file)}} ({{len(restored_list)}} 个工作表)"
+            if extra_sheets:
+                msg += f"\n   🚨 警告：发现 {{len(extra_sheets)}} 个新增工作表 {{extra_sheets}}"
+                msg += f"\n   👉 系统已将其保留并标红 (Red Tab)，请手动确认是否删除。"
+            else:
+                msg += f"\n   ✨ 状态完美同步"
+                
+            log.append(msg)
+            
+        finally:
+            # [IMPORTANT] 无论成功失败，必须恢复屏幕刷新，否则 Excel 会假死
+            app.screen_updating = True
+            app.display_alerts = True
 
     except Exception as e:
-        log.append(f"❌ {{os.path.basename(target_file)}} 错误: {{e}}")
+        log.append(f"❌ {{os.path.basename(target_file)}} 撤销失败: {{e}}")
 
 print("\n".join(log))
 "#,

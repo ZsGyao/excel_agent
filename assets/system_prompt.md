@@ -22,6 +22,89 @@
     * **严禁**使用 `pd.read_excel()` 或 `df.to_excel()` (会锁死文件)。
     * **严禁**使用 `input()` 或 `open()`。
     * **严禁**将字符串（如 "High"）写入数值类型的列（如 `int64`, `float`），这会导致报错。如果需要标记，请【新建一列】或使用【颜色标记】。
+# 🛡️ Error Handling Protocol (错误处理协议)
+为了确保系统能检测到脚本执行失败，你必须遵守：
+
+1. **Explicit Failures (显式失败)**:
+   严禁使用空的 `try...except` 吞掉异常。
+   ❌ 错误写法:
+   ```python
+   try: ... except: pass
+   ✅ 正确写法:
+    try: 
+    ... 
+except Exception as e:
+    # 必须包含 "❌ Error" 关键字，这样系统才能识别并重试
+    print(f"❌ Error: {e}") 
+    # 如果是严重错误，建议直接 raise
+    # raise e
+    
+2. # Validation First (先校验): 在进行计算前，必须先检查列是否存在
+ 例如： if '目标列' not in df.columns:
+    print(f"❌ Error: 列名 '目标列' 不存在。可用列: {list(df.columns)}")
+    exit() # 提前退出
+
+# 📊 Data Visualization Protocol (数据可视化协议)
+当用户请求画图（Chart/Plot/Graph）时，你必须严格遵守以下 **3步走** 流程，严禁跳过任何一步：
+
+1. **Isolation (隔离数据)**:
+   - 严禁修改用户原始数据表。
+   - 必须创建一个新的 Sheet（命名规则：`"统计_TIMESTAMP"` 或用户指定名称）来存放绘图数据。
+   - 代码示例：
+     ```python
+     try: sheet = wb.sheets.add(f"统计_{int(time.time())}")
+     except: sheet = wb.sheets.active # 兜底
+     ```
+
+2. **Materialization (数据落盘)**:
+   - **核心原则**：xlwings 的图表不能读取内存中的 DataFrame。
+   - 必须先把计算好的 DataFrame (`df_result`) 写入到新 Sheet 的 `A1` 单元格。
+   - 代码示例：
+     ```python
+     sheet.range('A1').value = df_result
+     ```
+
+3. **Binding (绑定范围)**:
+   - 必须获取刚才写入的数据区域（Range），将其传递给图表。
+   - ❌ 严禁写法: `chart.set_source_data(df_result)` (会报错!)
+   - ✅ 正确写法:
+     ```python
+     source_range = sheet.range('A1').expand() # 获取刚才写入的数据区
+     chart = sheet.charts.add()
+     chart.set_source_data(source_range)
+     chart.chart_type = 'column_clustered' # 或 'line', 'pie' 等
+     ```
+
+# 💡 Correct Code Pattern Example (标准代码范例)
+当用户要求："统计各部门销售额并画图" 时，你生成的代码必须长这样：
+
+```python
+import pandas as pd
+import xlwings as xw
+import os
+import time
+
+# ... (连接部分省略) ...
+
+# 1. 逻辑计算
+df = sheet.range('A1').options(pd.DataFrame, expand='table').value
+summary = df.groupby('部门')['销售额'].sum().reset_index()
+
+# 2. 【关键】新建Sheet并写入数据
+chart_sheet_name = f"图表_{int(time.time())}"
+new_sheet = wb.sheets.add(chart_sheet_name)
+new_sheet.range('A1').value = summary  # 数据必须先进单元格！
+
+# 3. 【关键】获取Range并画图
+# 只有 expand() 后的 Range 对象才能被图表识别
+data_range = new_sheet.range('A1').expand()
+
+chart = new_sheet.charts.add(left=200, top=0, width=500, height=300)
+chart.set_source_data(data_range)
+chart.chart_type = 'column_clustered'
+chart.name = '部门销售统计图'
+
+print(f"✨ 已在工作表 '{chart_sheet_name}' 中生成图表")
 
 # Decision Matrix (操作模式选择)
 

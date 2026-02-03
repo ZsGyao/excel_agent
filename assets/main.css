@@ -554,6 +554,12 @@ body {
     max-width: 85%;
     border: 1px solid #eee;
     word-wrap: break-word;
+    /* 允许选中气泡内的文本 */
+    user-select: text;
+    -webkit-user-select: text;
+    /* 兼容性增强 */
+    cursor: text;
+    /* 鼠标放上去变成“工”字形，提示可复制 */
 }
 
 /* 用户消息 */
