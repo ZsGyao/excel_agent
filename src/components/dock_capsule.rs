@@ -69,6 +69,7 @@ pub fn DockCapsule(
     mut window_mode: Signal<WindowMode>,
     mut messages: Signal<Vec<ChatMessage>>,
     mut last_file_path: Signal<String>,
+    on_switch_mode: EventHandler<WindowMode>,
 ) -> Element {
     let window = use_window();
     let mut dock_side = use_signal(|| DockSide::Right);
@@ -233,7 +234,7 @@ pub fn DockCapsule(
                 format!("📄 收到文件: {}", file_name),
                 false,
             ));
-            window_mode.set(WindowMode::Main);
+            on_switch_mode(WindowMode::Main);
         }
     };
 
@@ -289,7 +290,7 @@ pub fn DockCapsule(
                             if let Some(task) = debounce_task.write().take() {
                                 task.cancel();
                             }
-                            window_mode.set(WindowMode::Main);
+                            on_switch_mode(WindowMode::Main);
                         },
                         span { "聊天" }
                         img {
@@ -309,7 +310,7 @@ pub fn DockCapsule(
                             if let Some(task) = debounce_task.write().take() {
                                 task.cancel();
                             }
-                            window_mode.set(WindowMode::Settings);
+                            on_switch_mode(WindowMode::Settings);
                         },
                         img {
                             class: "menu-icon",

@@ -194,10 +194,23 @@ fn App() -> Element {
         }
     });
 
-    // 🔥🔥🔥 核心修复：移除所有 set_visible hack，优化顺序 🔥🔥🔥
+    // 切换模式并保存当前位置
+    let window_change_mode = window.clone();
+    let mut change_mode = move |target_mode: WindowMode| {
+        // 如果当前是 Widget 模式，说明用户可能拖动过，立刻保存当前真实坐标
+        if window_mode() == WindowMode::Widget {
+            if let Ok(current_pos) = window_change_mode.outer_position() {
+                last_widget_pos.set(Some(current_pos));
+            }
+        }
+        // 然后再切换模式，触发 Effect
+        window_mode.set(target_mode);
+    };
+
+    // 3. 窗口响应 Effect (只响应 mode 变化)
     let window_effect = window.clone();
     use_effect(move || {
-        let mode = window_mode();
+        let mode = window_mode(); // 订阅模式变化
         let monitor_opt = window_effect.current_monitor();
         if monitor_opt.is_none() {
             return;
@@ -550,6 +563,7 @@ fn App() -> Element {
                 window_mode,
                 messages,
                 last_file_path: use_signal(|| active_files.read().first().cloned().unwrap_or_default()),
+                on_switch_mode: change_mode, // 传入回调
             }
         } else if window_mode() == WindowMode::Settings {
             div {
@@ -557,7 +571,7 @@ fn App() -> Element {
                 oncontextmenu: move |evt| evt.prevent_default(),
                 Settings {
                     config,
-                    on_close: move |_| window_mode.set(WindowMode::Widget),
+                    on_close: move |_| change_mode(WindowMode::Widget),
                 }
             }
         } else {
@@ -568,14 +582,8 @@ fn App() -> Element {
                 div { class: "panel-header",
                     div { class: "title-text", "Excel AI Agent" }
                     div {
-                        class: "icon-btn",
-                        title: "设置",
-                        onclick: move |_| window_mode.set(WindowMode::Settings),
-                        "⚙️"
-                    }
-                    div {
                         style: "cursor: pointer; padding: 5px;",
-                        onclick: move |_| window_mode.set(WindowMode::Widget),
+                        onclick: move |_| change_mode(WindowMode::Widget),
                         "⏬"
                     }
                 }
