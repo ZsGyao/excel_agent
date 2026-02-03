@@ -83,7 +83,7 @@ body {
 .dock-wrapper {
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: inherit;
     /* 移除 gap，改用 padding 撑开视觉距离 */
     /* 这样两个元素在物理上是紧挨着的，鼠标滑过不会断触 */
     gap: 0px;
@@ -110,8 +110,6 @@ body {
     overflow: hidden;
     /* 抓手光标 */
     cursor: grab;
-    /*增加 margin 防止描边被视口截断 */
-    margin: 4px;
     /* 实体按钮必须开启交互 */
     pointer-events: auto;
     /* 弹性展开动画 */
@@ -192,14 +190,20 @@ body {
     transform: translateY(-10px);
     display: flex;
     gap: 8px;
-    padding-top: 12px;
+    /* 用 padding 填补胶囊和菜单之间的空隙 */
+    /* 这样鼠标滑过时，始终在 pointer-events: auto 的区域内 */
+    padding-top: 16px;
     padding-left: 4px;
     padding-right: 4px;
+    padding-bottom: 4px;
+    /* 底部稍微留一点捕获区 */
 
-    /* 负 margin 抵消部分 padding，微调位置 */
-    margin-top: -4px;
+    /* 向上提，让 padding 区域覆盖到胶囊下方 */
+    margin-top: -10px;
 
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+    /* 默认隐藏时穿透，展开后变为实体 */
     pointer-events: none;
 
     /* 在胶囊下层 */
@@ -207,7 +211,7 @@ body {
 }
 
 .dock-wrapper.expanded .secondary-grid {
-    height: 40px;
+    height: 60px;
     opacity: 1;
     transform: translateY(0);
     pointer-events: auto;
