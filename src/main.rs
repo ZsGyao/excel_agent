@@ -60,8 +60,9 @@ fn main() {
     };
 
     let head_content = r#"
-        <script src="./lib/highlight.min.js"></script>
-        <script src="./lib/python.min.js"></script>
+        <link rel="stylesheet" href="F:\codespace\excel_agent\assets\lib\atom-one-dark.min.css">
+        <script src="F:\codespace\excel_agent\assets\lib\highlight.min.js"></script>
+        <script src="F:\codespace\excel_agent\assets\lib\python.min.js"></script>
     "#;
 
     let window_builder = WindowBuilder::new()

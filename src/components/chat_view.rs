@@ -97,6 +97,7 @@ pub fn ChatView(
         // 解析文本段落
         let segments = parse_markdown_segments(&msg.text);
 
+        // 构建内容元素
         let content_elements = segments.into_iter().map(|seg| {
             match seg {
                 TextSegment::Text(t) => rsx! {
@@ -108,6 +109,7 @@ pub fn ChatView(
                     // 🔥 渲染为 Highlight.js 可识别的结构
                     div { style: "margin-bottom: 10px;",
                         pre {
+                            // 这里 class="language-python" 必须要有，hljs 靠这个识别
                             code { class: "language-python", "{c}" }
                         }
                     }
@@ -177,11 +179,7 @@ pub fn ChatView(
 
                 div { class: "{bubble_class}",
                     // 文本
-                    if !display_text.is_empty() {
-                        div { style: if is_undone { "white-space: pre-wrap; margin-bottom: 8px; text-decoration: line-through; opacity: 0.7;" } else { "white-space: pre-wrap; margin-bottom: 8px;" },
-                            "{display_text}"
-                        }
-                    }
+                    {content_elements}
 
                     // 思考过程
                     if !msg.is_user && (has_code || is_error) {
