@@ -1,6 +1,39 @@
 use crate::models::{ActionStatus, ChatMessage};
 use dioxus::{document::eval, prelude::*};
 
+#[derive(PartialEq)]
+enum TextSegment {
+    Text(String),
+    Code(String),
+}
+
+// 🔥 新增：解析函数，将混合文本切分为 普通文本 和 代码块
+fn parse_markdown_segments(text: &str) -> Vec<TextSegment> {
+    let mut segments = Vec::new();
+    let mut parts = text.split("```");
+
+    // 简单的偶数位置是文本，奇数位置是代码（假设代码块总是成对出现）
+    // 这是一个简化的解析，更健壮的方式是使用 pulldown-cmark 库
+    for (i, part) in parts.enumerate() {
+        if part.trim().is_empty() {
+            continue;
+        }
+
+        if i % 2 == 0 {
+            segments.push(TextSegment::Text(part.to_string()));
+        } else {
+            // 去掉可能存在的 "python" 前缀
+            let code_content = if part.trim_start().starts_with("python") {
+                part.replacen("python", "", 1)
+            } else {
+                part.to_string()
+            };
+            segments.push(TextSegment::Code(code_content.trim().to_string()));
+        }
+    }
+    segments
+}
+
 fn clean_text(text: &str) -> String {
     let mut result = String::new();
     let mut in_code = false;
@@ -37,6 +70,17 @@ pub fn ChatView(
             if(el) el.scrollTop = el.scrollHeight;
         }, 50);"#,
         );
+
+        // 触发 Highlight.js 对页面上所有代码块进行高亮
+        let _ = eval(
+            r#"
+            setTimeout(() => {
+                if (window.hljs) {
+                    window.hljs.highlightAll();
+                }
+            }, 100); 
+        "#,
+        );
     });
 
     let msgs = messages.read().clone();
@@ -49,6 +93,27 @@ pub fn ChatView(
         let is_undone = matches!(msg.status, ActionStatus::Undone);
         let display_text = clean_text(&msg.text);
         let bubble_class = if is_undone { "bubble undone-state" } else { "bubble" };
+
+        // 解析文本段落
+        let segments = parse_markdown_segments(&msg.text);
+
+        let content_elements = segments.into_iter().map(|seg| {
+            match seg {
+                TextSegment::Text(t) => rsx! {
+                    div { style: if is_undone { "white-space: pre-wrap; margin-bottom: 8px; text-decoration: line-through; opacity: 0.7;" } else { "white-space: pre-wrap; margin-bottom: 8px;" },
+                        "{t}"
+                    }
+                },
+                TextSegment::Code(c) => rsx! {
+                    // 🔥 渲染为 Highlight.js 可识别的结构
+                    div { style: "margin-bottom: 10px;",
+                        pre {
+                            code { class: "language-python", "{c}" }
+                        }
+                    }
+                }
+            }
+        });
 
         // 底部交互栏逻辑
         let bottom_actions = match msg.status {
@@ -132,8 +197,9 @@ pub fn ChatView(
                             }
                             div { class: "thinking-content",
                                 if let Some(code) = &msg.pending_code {
-                                    pre { style: "font-size: 0.8em; overflow-x: auto; background: #222; color: #eee; padding: 8px; margin: 0;",
-                                        "{code}"
+                                    // 这里也是代码，也加上高亮
+                                    pre {
+                                        code { class: "language-python", "{code}" }
                                     }
                                 }
                                 if let ActionStatus::Error(e) = &msg.status {

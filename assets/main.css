@@ -1,3 +1,5 @@
+@import url("lib/atom-one-dark.min.css");
+
 /* ==========================================================================
    Excel Agent - Main Stylesheet
    Style: Comic / Modern Hybrid (漫画描边 + 现代极简)
@@ -599,13 +601,38 @@ body {
 }
 
 .thinking-content {
-    background: #1e1e1e;
-    /* 代码块深色背景 */
-    padding: 12px;
-    color: #eee;
-    font-family: Consolas, monospace;
+    background: #282c34;
+    /* Atom One Dark 背景色 */
+    padding: 0;
+    color: #abb2bf;
+    /* Atom One Dark 字体色 */
+    font-family: Consolas, 'Courier New', monospace;
     font-size: 12px;
     overflow-x: auto;
+    border-radius: 0 0 6px 6px;
+}
+
+.thinking-content pre {
+    margin: 0;
+    padding: 12px;
+}
+
+/* 覆盖 highlight.js 默认的 padding，防止双重 padding */
+pre code.hljs {
+    display: block;
+    overflow-x: auto;
+    padding: 0;
+    /* 由外层容器控制 padding */
+    background: transparent;
+    /* 背景色由 thinking-content 控制 */
+    font-family: inherit;
+}
+
+pre code.hljs {
+    border-radius: 8px;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 13px;
+    line-height: 1.5;
 }
 
 /* 撤销/失效状态的消息样式 */

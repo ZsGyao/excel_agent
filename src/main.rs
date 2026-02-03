@@ -59,6 +59,11 @@ fn main() {
         }
     };
 
+    let head_content = r#"
+        <script src="./lib/highlight.min.js"></script>
+        <script src="./lib/python.min.js"></script>
+    "#;
+
     let window_builder = WindowBuilder::new()
         .with_title("Excel Agent")
         .with_inner_size(LogicalSize::new(130.0, 160.0))
@@ -69,7 +74,9 @@ fn main() {
         .with_skip_taskbar(true)
         .with_always_on_top(true);
 
-    let config = Config::new().with_window(window_builder);
+    let config = Config::new()
+        .with_window(window_builder)
+        .with_custom_head(head_content.to_string());
     LaunchBuilder::desktop().with_cfg(config).launch(App);
 
     // 退出清理
