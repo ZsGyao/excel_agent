@@ -59,12 +59,6 @@ fn main() {
         }
     };
 
-    let head_content = r#"
-        <link rel="stylesheet" href="F:\codespace\excel_agent\assets\lib\atom-one-dark.min.css">
-        <script src="F:\codespace\excel_agent\assets\lib\highlight.min.js"></script>
-        <script src="F:\codespace\excel_agent\assets\lib\python.min.js"></script>
-    "#;
-
     let window_builder = WindowBuilder::new()
         .with_title("Excel Agent")
         .with_inner_size(LogicalSize::new(130.0, 160.0))
@@ -75,9 +69,7 @@ fn main() {
         .with_skip_taskbar(true)
         .with_always_on_top(true);
 
-    let config = Config::new()
-        .with_window(window_builder)
-        .with_custom_head(head_content.to_string());
+    let config = Config::new().with_window(window_builder);
     LaunchBuilder::desktop().with_cfg(config).launch(App);
 
     // 退出清理
@@ -564,7 +556,10 @@ fn App() -> Element {
     });
 
     rsx! {
+        document::Stylesheet { href: asset!("/assets/lib/atom-one-dark.min.css") }
         document::Stylesheet { href: asset!("/assets/main.css") }
+        script { src: asset!("/assets/lib/highlight.min.js") }
+        script { src: asset!("/assets/lib/python.min.js") }
 
         if window_mode() == WindowMode::Widget {
             DockCapsule {

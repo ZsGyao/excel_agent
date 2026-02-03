@@ -273,7 +273,6 @@ pub fn DockCapsule(
                 ondragleave: handle_drag_leave,
                 ondrop: handle_drop,
                 oncontextmenu: move |evt| evt.prevent_default(),
-
                 div {
                     class: "main-capsule",
                     onmousedown: handle_mouse_down,
