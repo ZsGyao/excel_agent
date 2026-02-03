@@ -7,3 +7,4 @@
 **/*.rs.bk
 py_env
 *.xlsx
+large_test_data.xlsx.bak

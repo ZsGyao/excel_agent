@@ -1,7 +1,7 @@
 use crate::models::{ActionStatus, AppConfig, ChatMessage};
 use crate::services::ai;
 use crate::services::config::save_config;
-use crate::services::python::get_excel_summary;
+use crate::services::python::get_multi_file_summary;
 use dioxus::prelude::*;
 
 fn extract_python_code(text: &str) -> Option<String> {
@@ -41,7 +41,7 @@ fn remove_code_block(text: &str) -> String {
 #[component]
 pub fn InputArea(
     messages: Signal<Vec<ChatMessage>>,
-    last_file_path: Signal<String>,
+    active_files: Signal<Vec<String>>,
     is_loading: Signal<bool>,
     config: Signal<AppConfig>,
     // 🔥 信号桥：接收错误信息
@@ -71,17 +71,17 @@ pub fn InputArea(
         let ai_id = messages.read().len();
         messages.write().push(ChatMessage::loading(ai_id));
 
-        let file = last_file_path();
+        let files = active_files.read().clone();
 
         spawn(async move {
             let cfg = config.read().clone();
 
             // 构建上下文
-            let context_data = if !file.is_empty() {
-                let summary = get_excel_summary(&file).await;
+            let context_data = if !files.is_empty() {
+                let summary = get_multi_file_summary(files.clone()).await;
                 Some(format!(
-                    "Target File Path: r\"{}\"\n\nData Context (First 5 rows):\n{}",
-                    file, summary
+                    "Target File Path: r\"{:?}\"\n\nData Context (First 5 rows):\n{}",
+                    files, summary
                 ))
             } else {
                 None

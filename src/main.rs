@@ -17,7 +17,7 @@ use dioxus::prelude::*;
 use crate::components::dock_capsule::DockCapsule;
 use crate::models::{ActionStatus, WindowMode};
 use crate::services::config::load_config;
-use crate::services::python::{create_live_backup, restore_file, run_hot_undo, run_python_code};
+use crate::services::python::{create_batch_backups, run_batch_hot_undo, run_python_code};
 use components::{chat_view::ChatView, input_area::InputArea, settings::Settings};
 use models::ChatMessage;
 
@@ -28,11 +28,12 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPI_GET
 
 fn main() {
     dioxus_logger::init(tracing::Level::INFO).expect("failed to init logger");
-    services::python::init_python_env();
 
-    // 启动时清理（防止上次强杀残留）
+    // 初始化与清理
+    services::python::init_python_env();
     services::python::cleanup_backups();
-    // 注册崩溃钩子（防止程序 Panic 时残留）
+
+    // 崩溃钩子
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         println!("💥 程序发生严重错误，正在紧急清理临时文件...");
@@ -58,8 +59,6 @@ fn main() {
         }
     };
 
-    // 🔥 恢复默认行为：不需要在这里 set_visible(false)
-    // 除非你真的想防止启动那一下白屏，否则 true 体验更好
     let window_builder = WindowBuilder::new()
         .with_title("Excel Agent")
         .with_inner_size(LogicalSize::new(130.0, 160.0))
@@ -71,10 +70,9 @@ fn main() {
         .with_always_on_top(true);
 
     let config = Config::new().with_window(window_builder);
-
     LaunchBuilder::desktop().with_cfg(config).launch(App);
 
-    // 正常关闭时清理
+    // 退出清理
     println!("🛑 程序正常退出，正在清理临时文件...");
     services::python::cleanup_backups();
 }
@@ -355,13 +353,14 @@ fn App() -> Element {
         }
     });
 
+    // --- 状态定义 ---
     let mut messages =
         use_signal(|| vec![ChatMessage::new(0, "👋 嗨！把 Excel 拖进来开始吧。", false)]);
     let config = use_signal(|| load_config());
-    let mut last_file_path = use_signal(|| String::new());
+    // 多文件状态
+    let mut active_files = use_signal(|| Vec::<String>::new());
     let mut is_dragging = use_signal(|| false);
     let is_loading = use_signal(|| false);
-
     // 错误修复信号
     let mut error_fix_signal = use_signal(|| None::<String>);
     let mut retry_count = use_signal(|| 0);
@@ -370,39 +369,34 @@ fn App() -> Element {
     // 🔥 1. Confirm 回调
     let mut on_confirm = move |msg_id: usize| {
         // 1. 获取指令，但不在这里备份（因为 backup_file 现在是 async 的）
-        let (code_opt, target_file) = {
+        let (code_opt, current_files) = {
             let mut msgs = messages.write();
             let msg = &mut msgs[msg_id];
             let code = msg.pending_code.clone();
             if code.is_some() {
                 msg.status = ActionStatus::Running;
             }
-            (code, last_file_path())
+            (code, active_files.read().clone())
         };
 
         if let Some(code) = code_opt {
             spawn(async move {
-                // 2. 异步创建【热备份】 (SaveCopyAs)
-                // 这会保存当前的内存状态，解决 "Undo 无效" 问题
-                let backup_path = if !target_file.is_empty() {
-                    match create_live_backup(&target_file).await {
-                        Ok(p) => Some(p),
-                        Err(e) => {
-                            println!("⚠️ 备份失败: {}", e);
-                            None
-                        }
-                    }
+                // 1. 批量备份当前所有活跃文件
+                // 只有成功备份的文件，之后才会被记录到 Undo 列表里
+                let backups = if !current_files.is_empty() {
+                    create_batch_backups(current_files).await
                 } else {
-                    None
+                    Vec::new()
                 };
 
-                // 3. 将备份路径写入消息
-                if let Some(bp) = backup_path {
-                    messages.write()[msg_id].backup_path = Some(bp);
+                // 2. 记录备份路径到消息中
+                if !backups.is_empty() {
+                    messages.write()[msg_id].backup_paths = Some(backups);
                 }
 
                 // 4. 执行 AI 代码
                 let res = run_python_code(&code).await;
+                // 结果处理
                 let mut msgs = messages.write();
                 if let Some(msg) = msgs.get_mut(msg_id) {
                     match res {
@@ -457,75 +451,49 @@ fn App() -> Element {
         }
     };
 
-    // 级联回溯撤销
+    // 级联回溯批量撤销逻辑
     let on_undo = move |target_msg_id: usize| {
-        // 1. 获取必要信息 (避免在该 async块 中长时间持有锁)
-        let (backup_path, target_file) = {
+        let backup_pairs = {
             let msgs = messages.read();
-            if let Some(msg) = msgs.get(target_msg_id) {
-                (msg.backup_path.clone(), last_file_path())
-            } else {
-                (None, String::new())
-            }
+            msgs.get(target_msg_id).and_then(|m| m.backup_paths.clone())
         };
 
-        if let Some(bk) = backup_path {
+        if let Some(pairs) = backup_pairs {
             spawn(async move {
-                // 执行恢复逻辑 (优先物理恢复，失败则热恢复)
-                let restore_result = match restore_file(&target_file, &bk) {
-                    Ok(_) => Ok("物理恢复"),
-                    Err(_) => {
-                        // 物理失败，尝试热恢复
-                        match run_hot_undo(&target_file, &bk).await {
-                            Ok(_) => Ok("热撤销"),
-                            Err(e) => Err(e),
-                        }
-                    }
-                };
+                // 尝试批量热恢复
+                let res = run_batch_hot_undo(pairs).await;
 
-                // 更新 UI 状态：级联标记失效
                 let mut msgs = messages.write();
+                let len = msgs.len();
 
-                match restore_result {
-                    Ok(method) => {
-                        // 🔥 重点：从 target_id 开始，直到最后一条消息
-                        // 将所有 "Success" 的消息都标记为 "Undone"，因为文件已经回滚到了它们的过去
-                        let len = msgs.len();
-                        for i in target_msg_id..len {
-                            if let Some(msg) = msgs.get_mut(i) {
-                                // 只有处于成功状态的才需要标记为“已撤销”
-                                // 或者是正在运行的，也强制取消
-                                if matches!(
-                                    msg.status,
-                                    ActionStatus::Success | ActionStatus::Running
-                                ) {
-                                    msg.status = ActionStatus::Undone;
-
-                                    // 仅在触发撤销的那条消息上显示详细提示
-                                    if i == target_msg_id {
-                                        msg.text.push_str(&format!(
-                                            "\n\n✨ 成功回溯 ({})！此操作及后续操作已撤销。",
-                                            method
-                                        ));
-                                    } else {
-                                        // 后续被波及的消息，只加一个简单标记
-                                        msg.text.push_str("\n\n(因历史回溯，此操作已失效)");
-                                    }
+                // 级联失效处理
+                for i in target_msg_id..len {
+                    if let Some(m) = msgs.get_mut(i) {
+                        if matches!(m.status, ActionStatus::Success | ActionStatus::Running) {
+                            m.status = ActionStatus::Undone;
+                            if i == target_msg_id {
+                                match res {
+                                    Ok(ref log) => m.text.push_str(&format!("\n\n{}", log)),
+                                    Err(ref e) => m.text.push_str(&format!("\n❌ 撤销出错: {}", e)),
                                 }
+                            } else {
+                                m.text.push_str("\n(因回溯已失效)");
                             }
-                        }
-
-                        // 也可以选择在底部插入一条新系统消息告诉用户
-                        // msgs.push(ChatMessage::new(msgs.len(), "🔄 时间线已重置到指定节点。", false));
-                    }
-                    Err(e) => {
-                        if let Some(msg) = msgs.get_mut(target_msg_id) {
-                            msg.text.push_str(&format!("\n❌ 回溯失败: {}", e));
                         }
                     }
                 }
             });
         }
+    };
+
+    let mut remove_file = move |path: String| {
+        let mut files = active_files.write();
+        files.retain(|f| f != &path);
+    };
+
+    // 清空所有文件
+    let mut clear_all_files = move |_| {
+        active_files.write().clear();
     };
 
     // 🔥 1. 判断聊天状态
@@ -537,23 +505,52 @@ fn App() -> Element {
         "content-area center-mode"
     };
 
-    // 🔥 2. 获取文件名用于显示
-    let current_file = last_file_path();
-    let file_name = if !current_file.is_empty() {
-        Path::new(&current_file)
+    let file_list_data = active_files.read().clone();
+    let file_count = file_list_data.len();
+    let file_list_elements = file_list_data.iter().map(|file_path| {
+        let p = file_path.clone();
+        let name = Path::new(&p)
             .file_name()
             .unwrap_or_default()
             .to_string_lossy()
+            .to_string();
+        // 根据扩展名给一点不同的视觉
+        let ext = Path::new(&p)
+            .extension()
+            .unwrap_or_default()
+            .to_string_lossy()
             .to_string()
-    } else {
-        String::new()
-    };
+            .to_uppercase();
+
+        rsx! {
+            div { class: "file-card", title: "{p}", // hover 显示全路径
+                div { class: "file-icon-box",
+                    div { class: "file-icon-text", "{ext}" } // 显示 XLSX / CSV
+                }
+                div { class: "file-info",
+                    div { class: "file-name", "{name}" }
+                }
+                div {
+                    class: "file-remove-btn",
+                    onclick: move |evt| {
+                        evt.stop_propagation();
+                        remove_file(p.clone());
+                    },
+                    "✕"
+                }
+            }
+        }
+    });
 
     rsx! {
         document::Stylesheet { href: asset!("/assets/main.css") }
 
         if window_mode() == WindowMode::Widget {
-            DockCapsule { window_mode, messages, last_file_path }
+            DockCapsule {
+                window_mode,
+                messages,
+                last_file_path: use_signal(|| active_files.read().first().cloned().unwrap_or_default()),
+            }
         } else if window_mode() == WindowMode::Settings {
             div {
                 class: "window-frame settings-panel",
@@ -599,11 +596,18 @@ fn App() -> Element {
                         evt.prevent_default();
                         is_dragging.set(false);
                         let files = evt.data().files();
-                        if let Some(first_file) = files.first() {
-                            let fname = first_file.name();
-                            let dir = std::env::current_dir().unwrap_or_default();
-                            let path = dir.join(&fname).to_string_lossy().to_string();
-                            last_file_path.set(path);
+                        if !files.is_empty() {
+                            let mut current = active_files.write();
+                            for file in files {
+                                let path = std::env::current_dir()
+                                    .unwrap_or_default()
+                                    .join(file.name())
+                                    .to_string_lossy()
+                                    .to_string();
+                                if !current.contains(&path) {
+                                    current.push(path);
+                                }
+                            }
                         }
                     },
 
@@ -614,18 +618,17 @@ fn App() -> Element {
                             div { class: "drag-overlay", "📂 投喂 Excel！" }
                         }
 
-                        // 🔥 4. 文件悬浮胶囊
-                        if !current_file.is_empty() {
-                            div { class: "file-pill-container",
-                                div { class: "file-pill",
-                                    span { "📊 {file_name}" }
-                                    span {
-                                        class: "close-file",
-                                        onclick: move |_| last_file_path.set(String::new()),
-                                        title: "移除文件",
-                                        "✕"
+                        if !active_files.read().is_empty() {
+                            div { class: "workspace-panel",
+                                div { class: "workspace-header",
+                                    div { class: "workspace-title", "📂 工作区 ({file_count})" }
+                                    div {
+                                        class: "workspace-clear-btn",
+                                        onclick: clear_all_files,
+                                        "清空全部"
                                     }
                                 }
+                                div { class: "file-card-scroll", {file_list_elements} }
                             }
                         }
 
@@ -633,8 +636,8 @@ fn App() -> Element {
                         if has_started_chat {
                             ChatView {
                                 messages,
-                                last_file_path,
-                                on_confirm,
+                                last_file_path: use_signal(|| String::new()), // 兼容参数
+                                on_confirm: on_manual_confirm,
                                 on_cancel,
                                 on_undo,
                             }
@@ -651,7 +654,7 @@ fn App() -> Element {
                         // 输入区 (始终存在，位置由父容器 class 控制)
                         InputArea {
                             messages,
-                            last_file_path,
+                            active_files,
                             is_loading,
                             config,
                             error_fix_signal,

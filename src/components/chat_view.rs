@@ -5,10 +5,20 @@ fn clean_text(text: &str) -> String {
     let mut result = String::new();
     let mut in_code = false;
     for line in text.lines() {
-        if line.trim().starts_with("```") { in_code = !in_code; continue; }
-        if !in_code { result.push_str(line); result.push('\n'); }
+        if line.trim().starts_with("```") {
+            in_code = !in_code;
+            continue;
+        }
+        if !in_code {
+            result.push_str(line);
+            result.push('\n');
+        }
     }
-    result.replace("下面是代码", "").replace("Here is the code", "").trim().to_string()
+    result
+        .replace("下面是代码", "")
+        .replace("Here is the code", "")
+        .trim()
+        .to_string()
 }
 
 #[component]
@@ -21,10 +31,12 @@ pub fn ChatView(
 ) -> Element {
     use_effect(move || {
         messages.read();
-        let _ = eval(r#"setTimeout(() => {
+        let _ = eval(
+            r#"setTimeout(() => {
             const el = document.getElementById('chat-scroll');
             if(el) el.scrollTop = el.scrollHeight;
-        }, 50);"#);
+        }, 50);"#,
+        );
     });
 
     let msgs = messages.read().clone();
@@ -73,7 +85,7 @@ pub fn ChatView(
                 }
             },
             ActionStatus::Success => {
-                if msg.backup_path.is_some() {
+                if msg.backup_paths.is_some() {
                     rsx! {
                         div { style: "margin-top: 8px; border-top: 1px dashed #ccc; padding-top: 4px;",
                             button {

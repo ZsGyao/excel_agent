@@ -49,8 +49,9 @@ pub struct ChatMessage {
 
     /// 待执行的 Python 代码 (仅当 status == WaitingConfirmation 时有效)
     pub pending_code: Option<String>,
-    /// 撤销用的备份文件路径 (仅当 status == Success 时有效)
-    pub backup_path: Option<String>,
+    /// 备份路径映射 (仅当 status == Success 时有效)
+    /// 支持多文件同时回滚 Vec<(原文件路径，备份文件路径)>
+    pub backup_paths: Option<Vec<(String, String)>>,
 }
 
 impl ChatMessage {
@@ -70,7 +71,7 @@ impl ChatMessage {
             status: ActionStatus::None,
             image: None,
             pending_code: None,
-            backup_path: None,
+            backup_paths: None,
         }
     }
 
@@ -85,7 +86,7 @@ impl ChatMessage {
             status: ActionStatus::Loading,
             image: None,
             pending_code: None,
-            backup_path: None,
+            backup_paths: None,
         }
     }
 }
