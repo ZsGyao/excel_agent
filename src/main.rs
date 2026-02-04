@@ -7,14 +7,10 @@ mod services;
 use std::path::Path;
 use std::time::Duration;
 
-use dioxus::desktop::tao::event;
 use dioxus::desktop::tao::platform::windows::WindowBuilderExtWindows;
 use dioxus::desktop::trayicon::{Icon, TrayIconBuilder, TrayIconEvent};
 use dioxus::desktop::wry::dpi::PhysicalPosition;
-use dioxus::desktop::{
-    use_wry_event_handler, Config, LogicalPosition, LogicalSize, WindowBuilder, WindowEvent,
-};
-use dioxus::html::HasFileData;
+use dioxus::desktop::{Config, LogicalPosition, LogicalSize, WindowBuilder};
 use dioxus::prelude::*;
 use futures_util::StreamExt;
 
