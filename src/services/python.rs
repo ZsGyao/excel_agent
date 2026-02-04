@@ -371,7 +371,6 @@ except:
 ///
 /// # 架构变更 (Safe Undo Upgrade)
 ///
-/// * **旧逻辑**: 仅根据 Active Sheet 名字去备份里找同名表并覆盖。
 /// * **新逻辑**: **全量扫描 + 安全策略**。
 ///     1.  遍历备份文件里的**所有** Sheet。
 ///     2.  如果目标里有同名 Sheet -> 覆盖恢复 (标记为**绿色**)。
@@ -458,13 +457,16 @@ for target_file, backup_file in pairs:
 
             wb_backup.close()
             
-            # 5. 生成用户报告
-            msg = f"✅ 已回溯 {{os.path.basename(target_file)}} ({{len(restored_list)}} 个工作表)"
+            # 5. 构造反馈消息 (使用 Markdown 语法)
+            msg = f"✅ 已回溯 **{{os.path.basename(target_file)}}**"
+            
             if extra_sheets:
-                msg += f"\n   🚨 警告：发现 {{len(extra_sheets)}} 个新增工作表 {{extra_sheets}}"
-                msg += f"\n   👉 系统已将其保留并标红 (Red Tab)，请手动确认是否删除。"
+                # 🔥 这里使用了 > 引用语法，配合 CSS 形成红色警告框
+                msg += f"\n\n> 🚨 **检测到新增工作表（已保留）**"
+                msg += f"\n> 系统发现以下表格不在备份中：`{{extra_sheets}}`"
+                msg += f"\n> 为防止数据丢失，已将其**标红**，请务必手动确认是否删除。"
             else:
-                msg += f"\n   ✨ 状态完美同步"
+                msg += f"\n✨ 状态已完美同步"
                 
             log.append(msg)
             

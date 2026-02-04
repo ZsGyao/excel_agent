@@ -562,6 +562,27 @@ body {
     /* 鼠标放上去变成“工”字形，提示可复制 */
 }
 
+/* 🚨 警告框专用样式 (基于 Markdown 引用块 >) */
+.message blockquote {
+    margin: 10px 0;
+    padding: 12px 16px;
+    background-color: #fff2f0;
+    /* 浅红色背景 */
+    border-left: 4px solid #ff4d4f;
+    /* 深红色左边框 */
+    border-radius: 4px;
+    color: #cf1322;
+    /* 深红色文字 */
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.message blockquote strong {
+    color: #a8071a;
+    /* 标题加深 */
+    font-weight: 700;
+}
+
 /* 用户消息 */
 .msg-user {
     background: #000;

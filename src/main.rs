@@ -7,12 +7,16 @@ mod services;
 use std::path::Path;
 use std::time::Duration;
 
+use dioxus::desktop::tao::event;
 use dioxus::desktop::tao::platform::windows::WindowBuilderExtWindows;
 use dioxus::desktop::trayicon::{Icon, TrayIconBuilder, TrayIconEvent};
 use dioxus::desktop::wry::dpi::PhysicalPosition;
-use dioxus::desktop::{Config, LogicalPosition, LogicalSize, WindowBuilder};
+use dioxus::desktop::{
+    use_wry_event_handler, Config, LogicalPosition, LogicalSize, WindowBuilder, WindowEvent,
+};
 use dioxus::html::HasFileData;
 use dioxus::prelude::*;
+use futures_util::StreamExt;
 
 use crate::components::dock_capsule::DockCapsule;
 use crate::models::{ActionStatus, WindowMode};
@@ -348,7 +352,7 @@ fn App() -> Element {
         }
     });
 
-    // 托盘点击逻辑
+    // 托盘监听
     use_future(move || {
         let window = window.clone();
         async move {
@@ -372,12 +376,49 @@ fn App() -> Element {
     let config = use_signal(|| load_config());
     // 多文件状态
     let mut active_files = use_signal(|| Vec::<String>::new());
-    let mut is_dragging = use_signal(|| false);
     let is_loading = use_signal(|| false);
     // 错误修复信号
     let mut error_fix_signal = use_signal(|| None::<String>);
     let mut retry_count = use_signal(|| 0);
     const MAX_RETRIES: i32 = 3;
+
+    // 文件处理通道
+    let tx_files = use_coroutine(move |mut rx: UnboundedReceiver<String>| async move {
+        // 🔥 修复：现在 rx.next() 可以工作了，因为引入了 StreamExt
+        while let Some(path) = rx.next().await {
+            println!("👉 Coroutine 收到文件: {}", path); // 打印日志
+            let mut current = active_files.write();
+            if !current.contains(&path) {
+                let new_id = messages.read().len();
+                let file_name = Path::new(&path)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                messages.write().push(ChatMessage::new(
+                    new_id,
+                    &format!("📄 收到文件: {}", file_name),
+                    false,
+                ));
+                current.push(path);
+                window_mode.set(WindowMode::Main);
+            }
+        }
+    });
+
+    // 打开文件对话框的函数
+    let open_file_dialog = move |_| {
+        spawn(async move {
+            // 使用 rfd 弹出原生选择框
+            if let Some(path) = rfd::AsyncFileDialog::new()
+                .add_filter("Excel", &["xlsx", "xls", "xlsm"])
+                .pick_file()
+                .await
+            {
+                let full_path = path.path().to_string_lossy().to_string();
+                tx_files.send(full_path);
+            }
+        });
+    };
 
     // 🔥 1. Confirm 回调
     let mut on_confirm = move |msg_id: usize| {
@@ -591,44 +632,9 @@ fn App() -> Element {
                     }
                 }
 
-                div {
-                    class: "app-container",
-                    ondragover: move |evt| {
-                        evt.prevent_default();
-                        if !is_dragging() {
-                            is_dragging.set(true);
-                        }
-                    },
-                    ondragleave: move |evt| {
-                        evt.prevent_default();
-                        is_dragging.set(false);
-                    },
-                    ondrop: move |evt| {
-                        evt.prevent_default();
-                        is_dragging.set(false);
-                        let files = evt.data().files();
-                        if !files.is_empty() {
-                            let mut current = active_files.write();
-                            for file in files {
-                                let path = std::env::current_dir()
-                                    .unwrap_or_default()
-                                    .join(file.name())
-                                    .to_string_lossy()
-                                    .to_string();
-                                if !current.contains(&path) {
-                                    current.push(path);
-                                }
-                            }
-                        }
-                    },
-
-                    // 🔥 3. 应用动态布局 Class
+                div { class: "app-container",
+                    // 3. 应用动态布局 Class
                     div { class: "{content_mode_class}",
-
-                        if is_dragging() {
-                            div { class: "drag-overlay", "📂 投喂 Excel！" }
-                        }
-
                         if !active_files.read().is_empty() {
                             div { class: "workspace-panel",
                                 div { class: "workspace-header",
@@ -659,6 +665,12 @@ fn App() -> Element {
                                     "Excel AI Agent"
                                 }
                                 div { "拖入表格，开始分析" }
+                                button {
+                                    class: "confirm-btn", // 复用现有按钮样式
+                                    style: "font-size: 16px; padding: 10px 24px;",
+                                    onclick: open_file_dialog,
+                                    "📂 打开本地 Excel 文件"
+                                }
                             }
                         }
 

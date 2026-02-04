@@ -34,6 +34,30 @@ fn parse_markdown_segments(text: &str) -> Vec<TextSegment> {
     segments
 }
 
+// 🔥 新增：辅助函数，简单处理行内的 **加粗** 语法
+// 这样 "🚨 **检测到...**" 里的文字就会变成 <strong />，配合 CSS 变深红色
+fn render_markdown_inline(text: &str) -> Element {
+    let parts: Vec<&str> = text.split("**").collect();
+    rsx! {
+        {
+            parts
+                .iter()
+                .enumerate()
+                .map(|(i, part)| {
+                    if i % 2 == 1 {
+                        rsx! {
+                            strong { "{part}" }
+                        }
+                    } else {
+                        rsx! {
+                            span { "{part}" }
+                        }
+                    }
+                })
+        }
+    }
+}
+
 fn clean_text(text: &str) -> String {
     let mut result = String::new();
     let mut in_code = false;
@@ -52,6 +76,50 @@ fn clean_text(text: &str) -> String {
         .replace("Here is the code", "")
         .trim()
         .to_string()
+}
+
+// 🔥 核心修复：将复杂的文本段落渲染逻辑提取为独立函数
+// 这避免了在 rsx! 或 map 闭包内部写复杂的 let 语句导致的解析错误
+fn render_text_segment_content(text: String, is_undone: bool) -> Element {
+    let mut elements = Vec::new();
+    let mut current_quote_lines = Vec::new();
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('>') {
+            let content = trimmed.strip_prefix('>').unwrap_or("").trim();
+            current_quote_lines.push(content);
+        } else {
+            // 如果之前有引用块，先渲染并清空
+            if !current_quote_lines.is_empty() {
+                let quote_text = current_quote_lines.join("\n");
+                elements.push(rsx! {
+                    blockquote { {render_markdown_inline(&quote_text)} }
+                });
+                current_quote_lines.clear();
+            }
+            // 渲染普通文本行
+            if !trimmed.is_empty() {
+                elements.push(rsx! {
+                    div { style: "min-height: 1.2em;", {render_markdown_inline(line)} }
+                });
+            }
+        }
+    }
+
+    // 处理结尾残留的引用块
+    if !current_quote_lines.is_empty() {
+        let quote_text = current_quote_lines.join("\n");
+        elements.push(rsx! {
+            blockquote { {render_markdown_inline(&quote_text)} }
+        });
+    }
+
+    rsx! {
+        div { style: if is_undone { "white-space: pre-wrap; margin-bottom: 8px; text-decoration: line-through; opacity: 0.7;" } else { "white-space: pre-wrap; margin-bottom: 8px;" },
+            {elements.into_iter()}
+        }
+    }
 }
 
 #[component]
@@ -91,7 +159,6 @@ pub fn ChatView(
         let has_code = msg.pending_code.is_some();
         let is_error = matches!(msg.status, ActionStatus::Error(_));
         let is_undone = matches!(msg.status, ActionStatus::Undone);
-        let display_text = clean_text(&msg.text);
         let bubble_class = if is_undone { "bubble undone-state" } else { "bubble" };
 
         // 解析文本段落
@@ -100,11 +167,7 @@ pub fn ChatView(
         // 构建内容元素
         let content_elements = segments.into_iter().map(|seg| {
             match seg {
-                TextSegment::Text(t) => rsx! {
-                    div { style: if is_undone { "white-space: pre-wrap; margin-bottom: 8px; text-decoration: line-through; opacity: 0.7;" } else { "white-space: pre-wrap; margin-bottom: 8px;" },
-                        "{t}"
-                    }
-                },
+               TextSegment::Text(t) => render_text_segment_content(t, is_undone),
                 TextSegment::Code(c) => rsx! {
                     // 🔥 渲染为 Highlight.js 可识别的结构
                     div { style: "margin-bottom: 10px;",
