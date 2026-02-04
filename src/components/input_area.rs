@@ -44,10 +44,11 @@ pub fn InputArea(
     active_files: Signal<Vec<String>>,
     is_loading: Signal<bool>,
     config: Signal<AppConfig>,
-    // 🔥 信号桥：接收错误信息
+    // 信号桥：接收错误信息
     error_fix_signal: Signal<Option<String>>,
-    // 🔥 回调：请求立即运行 (用于自动修复)
+    // 回调：请求立即运行 (用于自动修复)
     on_run_code: EventHandler<usize>,
+    on_open_file: EventHandler<()>,
 ) -> Element {
     let mut input_text = use_signal(|| String::new());
 
@@ -60,7 +61,7 @@ pub fn InputArea(
 
         let user_id = messages.read().len();
         let display = if is_auto_fix {
-            "🤖 自动修复: 正在修正代码..."
+            "自动修复: 正在修正代码..."
         } else {
             &prompt_text
         };
@@ -180,6 +181,13 @@ pub fn InputArea(
 
     let active_model_name = config.read().active_profile().name.clone();
 
+    // button {
+    //                                     class: "confirm-btn", // 复用现有按钮样式
+    //                                     style: "font-size: 16px; padding: 10px 24px;",
+    //                                     onclick: open_file_dialog,
+    //                                     "📂 打开本地 Excel 文件"
+    //                                 }
+
     rsx! {
         // div 的 class 已经在 main.rs 的容器中被控制了 (center-mode vs chat-mode)
         div { class: "input-container",
@@ -190,6 +198,13 @@ pub fn InputArea(
                     onclick: move |_| switch_model(),
                     title: "点击切换模型",
                     "{active_model_name} ▾"
+                }
+                button {
+                    class: "tool-btn",
+                    title: "添加文件",
+                    // 🔥 绑定到从 main.rs 传进来的回调
+                    onclick: move |_| on_open_file.call(()),
+                    "📎"
                 }
             }
 

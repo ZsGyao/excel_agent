@@ -779,7 +779,8 @@ pre code.hljs {
 /* 输入框上方工具栏 */
 .input-toolbar {
     display: flex;
-    justify-content: space-between;
+    justify-content: start;
+    gap: 8px;
     padding: 0 4px;
 }
 
@@ -797,6 +798,22 @@ pre code.hljs {
 }
 
 .model-selector:hover {
+    background: #e0e0e0;
+}
+
+.tool-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: #f0f0f0;
+    border-radius: 8px;
+    cursor: pointer;
+    user-select: none;
+    border: none;
+}
+
+.tool-btn:hover {
     background: #e0e0e0;
 }
 

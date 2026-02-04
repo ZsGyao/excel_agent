@@ -665,12 +665,6 @@ fn App() -> Element {
                                     "Excel AI Agent"
                                 }
                                 div { "拖入表格，开始分析" }
-                                button {
-                                    class: "confirm-btn", // 复用现有按钮样式
-                                    style: "font-size: 16px; padding: 10px 24px;",
-                                    onclick: open_file_dialog,
-                                    "📂 打开本地 Excel 文件"
-                                }
                             }
                         }
 
@@ -682,6 +676,7 @@ fn App() -> Element {
                             config,
                             error_fix_signal,
                             on_run_code: on_auto_run,
+                            on_open_file: open_file_dialog,
                         }
                     }
                 }
