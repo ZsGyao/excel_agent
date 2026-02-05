@@ -1,4 +1,18 @@
 [application]
+name = "excel_agent"
+default_platform = "desktop"
+
+[bundle]
+identifier = "com.zsgyao.excel_agent"
+publisher = "zgy"
+icon = ["assets/icon.ico"]
+
+resources = [
+    "py_env.zip",    # 自动复制整个 py_env 文件夹
+    "python3.dll",   # 复制 DLL
+    "python311.dll", # 复制 DLL
+    "key",
+]
 
 [web.app]
 

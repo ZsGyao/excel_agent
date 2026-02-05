@@ -27,9 +27,23 @@ windows-sys = { version = "0.61.2", features = [
 ] }
 futures-util = "0.3"
 rfd = "0.17"
+zip = "7.3.0" # 用于解压
 
 [features]
 default = ["desktop"]
 web = ["dioxus/web"]
 desktop = ["dioxus/desktop"]
 mobile = ["dioxus/mobile"]
+
+[package.metadata.bundle]
+icon = ["assets/icon.ico"]
+name = "Excel Agent"
+identifier = "com.zsgyao.excel_agent"
+version = "0.1.0"
+copyright = "Copyright 2024 zgy"
+category = "Productivity"
+short_description = "Excel AI Agent"
+long_description = "An AI agent for Excel automation."
+
+[build-dependencies]
+winres = "0.1"

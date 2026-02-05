@@ -14,6 +14,7 @@
 use pyo3::prelude::*;
 use std::env;
 use std::fs;
+use std::io;
 use std::path::Path;
 use std::sync::Once;
 use std::time::SystemTime;
@@ -32,6 +33,17 @@ pub fn init_python_env() {
         // 获取当前运行目录
         let current_dir = env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
         let py_env_path = current_dir.join("py_env");
+        let zip_path = current_dir.join("py_env.zip");
+
+        // 如果 py_env 文件夹不存在，但是 py_env.zip 存在，说明是第一次运行，需要解压
+        if !py_env_path.exists() && zip_path.exists() {
+            println!("📦 首次运行，正在解压 Python 环境，请稍候...");
+            if let Err(e) = unzip_file(&zip_path, &py_env_path) {
+                println!("❌ 解压失败: {}", e);
+            } else {
+                println!("✅ 解压完成！");
+            }
+        }
 
         // 检查 py_env 是否存在，如果不存在打印警告（方便调试）
         if !py_env_path.exists() {
@@ -61,6 +73,7 @@ pub fn init_python_env() {
             // 告诉 Python 解释器：家就在这里，别去系统里找
             env::set_var("PYTHONHOME", &py_env_path);
             env::set_var("PYTHONPATH", &new_python_path);
+            env::set_var("XLWINGS_LICENSE_KEY", "non-commercial");
 
             // 可选：把 py_env 也加到系统 PATH 里，防止找不到 python3.dll
             if let Ok(path) = env::var("PATH") {
@@ -74,6 +87,33 @@ pub fn init_python_env() {
         pyo3::prepare_freethreaded_python();
         println!("🐍 Python 解释器初始化完成");
     });
+}
+
+// 辅助函数：解压逻辑
+fn unzip_file(zip_path: &Path, dest_dir: &Path) -> io::Result<()> {
+    let file = fs::File::open(zip_path)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)?;
+        let outpath = match file.enclosed_name() {
+            Some(path) => dest_dir.join(path),
+            None => continue,
+        };
+
+        if file.name().ends_with('/') {
+            fs::create_dir_all(&outpath)?;
+        } else {
+            if let Some(p) = outpath.parent() {
+                if !p.exists() {
+                    fs::create_dir_all(p)?;
+                }
+            }
+            let mut outfile = fs::File::create(&outpath)?;
+            io::copy(&mut file, &mut outfile)?;
+        }
+    }
+    Ok(())
 }
 
 /// 启动时清理旧的备份文件

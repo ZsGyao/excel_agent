@@ -8,9 +8,11 @@ use std::path::Path;
 use std::time::Duration;
 
 use dioxus::desktop::tao::platform::windows::WindowBuilderExtWindows;
-use dioxus::desktop::trayicon::{Icon, TrayIconBuilder, TrayIconEvent};
+use dioxus::desktop::trayicon::{Icon, MouseButton, TrayIconBuilder, TrayIconEvent};
 use dioxus::desktop::wry::dpi::PhysicalPosition;
-use dioxus::desktop::{Config, LogicalPosition, LogicalSize, WindowBuilder};
+use dioxus::desktop::{
+    use_tray_icon_event_handler, Config, LogicalPosition, LogicalSize, WindowBuilder,
+};
 use dioxus::prelude::*;
 use futures_util::StreamExt;
 
@@ -42,13 +44,13 @@ fn main() {
         default_hook(info);
     }));
 
-    let icon_path = "assets/icon.png";
-    let icon = load_icon(Path::new(icon_path));
+    let icon_bytes = include_bytes!("../assets/icon.png");
+    let icon = load_icon(icon_bytes);
 
     let _tray = match icon {
         Ok(i) => Some(Box::leak(Box::new(
             TrayIconBuilder::new()
-                .with_tooltip("Excel AI Agent")
+                .with_tooltip("Excel AI Agent\n左键：打开 | 右键：退出")
                 .with_icon(i)
                 .build()
                 .unwrap(),
@@ -77,9 +79,10 @@ fn main() {
     services::python::cleanup_backups();
 }
 
-fn load_icon(path: &Path) -> anyhow::Result<Icon> {
+fn load_icon(icon_bytes: &[u8]) -> anyhow::Result<Icon> {
+    // 使用 load_from_memory 而不是 open
     let (icon_rgba, icon_width, icon_height) = {
-        let image = image::open(path)?.into_rgba8();
+        let image = image::load_from_memory(icon_bytes)?.into_rgba8();
         let (width, height) = image.dimensions();
         let rgba = image.into_raw();
         (rgba, width, height)
@@ -171,6 +174,36 @@ fn App() -> Element {
     const SETTINGS_W: f64 = 750.0;
     const SETTINGS_H: f64 = 550.0;
     const MARGIN: f64 = 60.0;
+
+    // 使用 use_tray_icon_event_handler 监听事件
+    let window_tray = window.clone();
+    use_tray_icon_event_handler(move |event: &TrayIconEvent| {
+        match event {
+            // 左键单击：打开/激活窗口
+            TrayIconEvent::Click {
+                button: MouseButton::Left,
+                ..
+            }
+            | TrayIconEvent::DoubleClick {
+                button: MouseButton::Left,
+                ..
+            } => {
+                println!("✅ 托盘左键点击：激活窗口");
+                window_tray.set_visible(true);
+                window_tray.set_focus();
+                window_mode.set(WindowMode::Main);
+            }
+            // 右键单击：退出程序
+            TrayIconEvent::Click {
+                button: MouseButton::Right,
+                ..
+            } => {
+                println!("🛑 托盘右键点击：退出程序");
+                std::process::exit(0);
+            }
+            _ => {}
+        }
+    });
 
     // 初始化定位
     let window_init = window.clone();
@@ -345,24 +378,6 @@ fn App() -> Element {
                 always_on_top,
             );
             window_effect.set_focus();
-        }
-    });
-
-    // 托盘监听
-    use_future(move || {
-        let window = window.clone();
-        async move {
-            let receiver = TrayIconEvent::receiver();
-            loop {
-                if let Ok(event) = receiver.try_recv() {
-                    if let TrayIconEvent::Click { .. } = event {
-                        window.set_visible(true);
-                        window.set_focus();
-                        window_mode.set(WindowMode::Main);
-                    }
-                }
-                tokio::time::sleep(Duration::from_millis(200)).await;
-            }
         }
     });
 
