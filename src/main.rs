@@ -434,29 +434,38 @@ fn App() -> Element {
     // 🔥 1. Confirm 回调
     let mut on_confirm = move |msg_id: usize| {
         // 1. 获取指令，但不在这里备份（因为 backup_file 现在是 async 的）
-        let (code_opt, current_files) = {
+        let (code_opt, current_files, has_existing_backup) = {
             let mut msgs = messages.write();
             let msg = &mut msgs[msg_id];
             let code = msg.pending_code.clone();
             if code.is_some() {
                 msg.status = ActionStatus::Running;
             }
-            (code, active_files.read().clone())
+            // 检查当前消息是否已经关联了备份文件
+            let has_backup = msg.backup_paths.is_some();
+
+            // 返回需要的数据供 async 块使用
+            (code, active_files.read().clone(), has_backup)
         };
 
         if let Some(code) = code_opt {
             spawn(async move {
                 // 1. 批量备份当前所有活跃文件
                 // 只有成功备份的文件，之后才会被记录到 Undo 列表里
-                let backups = if !current_files.is_empty() {
-                    create_batch_backups(current_files).await
-                } else {
-                    Vec::new()
-                };
+                // 这样可以防止自动修复过程中的“脏文件”覆盖了“原始文件”的备份
+                if !has_existing_backup {
+                    let backups = if !current_files.is_empty() {
+                        create_batch_backups(current_files).await
+                    } else {
+                        Vec::new()
+                    };
 
-                // 2. 记录备份路径到消息中
-                if !backups.is_empty() {
-                    messages.write()[msg_id].backup_paths = Some(backups);
+                    // 2. 记录备份路径到消息中
+                    if !backups.is_empty() {
+                        messages.write()[msg_id].backup_paths = Some(backups);
+                    }
+                } else {
+                    println!("🛡️ 检测到已有备份，跳过本次备份，保留原始快照。");
                 }
 
                 // 4. 执行 AI 代码

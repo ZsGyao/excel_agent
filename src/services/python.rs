@@ -45,7 +45,7 @@ pub fn init_python_env() {
             }
         }
 
-        // 检查 py_env 是否存在，如果不存在打印警告（方便调试）
+        // 检查 py_env 是否存在
         if !py_env_path.exists() {
             println!(
                 "⚠️ 警告：未找到本地 py_env 目录，将尝试使用系统 Python。路径: {:?}",
@@ -54,28 +54,28 @@ pub fn init_python_env() {
         } else {
             println!("✅ 检测到本地 Python 环境: {:?}", py_env_path);
 
-            // 设置标准库压缩包 (根据你的实际文件名修改，比如 python311.zip)
             let std_lib = py_env_path.join("python311.zip");
-            // 设置第三方库目录
             let site_packages = py_env_path.join("Lib").join("site-packages");
-            // 设置 DLL 目录
             let dlls = py_env_path.join("DLLs");
 
-            // 拼接 PYTHONPATH (Windows 使用分号 ; 分隔)
+            // 🔥 关键修改：把 current_dir 加到 PYTHONPATH 的最前面
+            // 这样 Python 才能找到放在根目录下的 agent_utils.py
             let new_python_path = format!(
-                "{};{};{}",
+                "{};{};{};{}",
+                current_dir.display(), // <--- 必须加这个！
                 std_lib.display(),
                 site_packages.display(),
                 dlls.display()
             );
 
             // 强制设置环境变量
-            // 告诉 Python 解释器：家就在这里，别去系统里找
             env::set_var("PYTHONHOME", &py_env_path);
             env::set_var("PYTHONPATH", &new_python_path);
+
+            // 设置 xlwings License，防止报错
             env::set_var("XLWINGS_LICENSE_KEY", "non-commercial");
 
-            // 可选：把 py_env 也加到系统 PATH 里，防止找不到 python3.dll
+            // 可选：把 py_env 也加到系统 PATH 里
             if let Ok(path) = env::var("PATH") {
                 let new_path = format!("{};{}", py_env_path.display(), path);
                 env::set_var("PATH", new_path);
@@ -83,7 +83,6 @@ pub fn init_python_env() {
         }
 
         // 初始化 PyO3 解释器
-        // 此时它会读取上面设置的 PYTHONHOME
         pyo3::prepare_freethreaded_python();
         println!("🐍 Python 解释器初始化完成");
     });
@@ -269,7 +268,7 @@ for path in file_paths:
     try:
         # [NEW] sheet_name=None 表示读取字典 {{sheet_name: df}}
         # nrows=3 限制行数，避免 Token 爆炸，但足以展示结构
-        all_sheets = pd.read_excel(path, sheet_name=None, nrows=3) 
+        all_sheets = pd.read_excel(path, sheet_name=None, nrows=5) 
         
         if not all_sheets:
             final_report += "(Empty Excel File)\n"
