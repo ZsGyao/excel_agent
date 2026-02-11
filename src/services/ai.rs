@@ -1,125 +1,30 @@
+use crate::models::AppConfig;
+use crate::services::python;
 use anyhow::Result;
 use reqwest::{self, Client};
 use serde_json::{self, json, Value};
-use std::{
-    fs::{self, read_to_string},
-    path::Path,
-};
+use std::{fs::read_to_string, path::Path}; // 确保 main.rs 中有 mod services;
 
-use crate::models::AppConfig;
-
-// 内置兜底 Prompt，防止文件被误删后软件直接崩溃
-const DEFAULT_FALLBACK_PROMPT: &str = r#"
-# 角色设定
-你是一个拥有 10 年经验的 Python 数据分析专家，也是一个 Excel 自动化大师。
-你的任务是根据用户的需求，判断是进行普通对话，还是编写 Python 代码来处理 Excel 数据。
-
-# 核心交互规则 (请严格遵守)
-1. **普通闲聊/解释**：
-   - 如果用户的输入是问候、询问概念或不需要实际操作 Excel 的请求，请直接用**纯文本**回答，**不要**包含任何代码块。
-   
-2. **执行任务**：
-   - 如果用户要求处理数据、修改 Excel 或计算内容，请务必输出 Python 代码。
-   - **代码必须且只能**包含在 Markdown 代码块中，格式如下：
-     ```python
-     # 你的代码写在这里
-     ```
-   - 严禁输出代码块以外的解释性文字（除非非常必要），让代码块作为主要回复。
-
-# 代码编写规范 (Production Level)
-1. **完整性**：代码必须包含所有必要的 import 语句 (`import pandas as pd`, `import xlwings as xw`, `import os`)。
-2. **上下文感知**：用户当前操作的文件路径会包含在消息中，请从中提取并赋值给 `target_file` 变量。
-3. **打印输出**：所有处理结果、统计信息必须使用 `print()` 输出，以便在用户界面显示。
-
-# 核心技术规则：智能保存策略 (热更新)
-在 Windows 环境下，为了实现“所见即所得”并防止文件锁死 (Permission denied)，**严禁**直接使用 `df.to_excel()` 覆盖原文件。
-
-**请严格按照以下模板结构编写最后的数据写入逻辑**：
-
-```python
-import pandas as pd
-import xlwings as xw
-import os
-
-# ... [这里是你处理数据的逻辑，生成的最终 dataframe 变量名必须为 df] ...
-
-# 【关键】从上下文或硬编码中获取目标路径
-# 如果用户没有指定新路径，默认覆盖当前文件
-# 注意：Prompt Context 会告诉你当前文件路径，请灵活使用
-target_file = r"{file_path_placeholder}" 
-
-try:
-    # 1. 尝试连接当前活动的 Excel 实例（热更新模式）
-    filename = os.path.basename(target_file)
-    
-    # 尝试寻找已打开的 workbook
-    # 如果文件没打开，xlwings 会抛出异常，自动跳转到 except
-    wb = xw.books[filename]
-    
-    # 2. 如果找到了，直接写入当前活跃界面
-    # 激活该工作簿
-    wb.activate()
-    sheet = wb.sheets.active 
-    
-    # 清空原有区域，防止旧数据残留 (视情况而定，全量更新时必须清空)
-    sheet.clear() 
-    
-    # 将 DataFrame 写入，默认不带 index (除非用户明确要求保留索引)
-    sheet.range('A1').options(index=False).value = df 
-    
-    print(f"✨ 成功！数据已实时更新到打开的 Excel 窗口：{filename}")
-
-except Exception as e:
-    # 3. 如果没打开 Excel，或者连接失败，则降级为写入磁盘
-    print(f"👀 未检测到活动的 Excel 窗口，正在保存到磁盘... ({e})")
-    try:
-        df.to_excel(target_file, index=False)
-        print(f"💾 文件已保存到硬盘：{target_file}")
-    except Exception as save_error:
-         print(f"❌ 保存失败 (文件可能被占用且无法连接): {save_error}")
-"#;
-
-/// 读取外置 System Prompt
-fn get_system_prompt() -> String {
-    let path = Path::new("assets/system_prompt.md");
-    match read_to_string(path) {
-        Ok(content) => {
-            println!("✅ 已加载外部 System Prompt");
-            content
-        }
-        Err(e) => {
-            println!("⚠️ 读取 Prompt 失败: {}, 使用内置默认值", e);
-            DEFAULT_FALLBACK_PROMPT.to_string()
-        }
-    }
+/// 内部 helper: 读取 Prompt 模板
+fn load_prompt_template(filename: &str) -> String {
+    let path = Path::new("assets").join(filename);
+    read_to_string(path).unwrap_or_else(|_| {
+        println!("⚠️ Warning: Prompt file {} not found!", filename);
+        // 如果找不到，返回空字符串，依靠 LLM 的泛化能力
+        String::new()
+    })
 }
 
-pub async fn call_ai(
-    config: &AppConfig,
-    user_content: &str,
-    context: Option<String>,
-) -> Result<String> {
+/// 内部 helper: 基础 LLM 调用
+async fn llm_request(config: &AppConfig, system_prompt: &str, user_prompt: &str) -> Result<String> {
     let profile = config.active_profile();
     let api_key = &profile.api_key;
     let base_url = &profile.base_url;
     let model = &profile.model_id;
 
-    if api_key.is_empty() {
-        return Ok("请先在设置中配置 API Key".to_string());
-    }
-
     let client = Client::new();
 
-    // 1. 读取 Prompt
-    let mut system_instruction = get_system_prompt();
-
-    // 2. 注入 Context (文件路径、表头)
-    if let Some(ctx) = context {
-        system_instruction = format!("{}\n\n【Context】\n{}", system_instruction, ctx);
-    }
-
-    println!("🤖 请求 AI: {}", model);
-
+    // 构造请求，保持低温以确保稳定
     let response = client
         .post(format!(
             "{}/chat/completions",
@@ -130,8 +35,8 @@ pub async fn call_ai(
         .json(&json!({
             "model": model,
             "messages": [
-                { "role": "system", "content": system_instruction },
-                { "role": "user", "content": user_content }
+                { "role": "system", "content": system_prompt },
+                { "role": "user", "content": user_prompt }
             ],
             "temperature": 0.1
         }))
@@ -139,15 +44,97 @@ pub async fn call_ai(
         .await?;
 
     if !response.status().is_success() {
-        let error = response.text().await?;
-        return Ok(format!("API 请求错误: {}", error));
+        return Ok(format!("API Error: {}", response.text().await?));
     }
 
     let json: Value = response.json().await?;
-    let content = json["choices"][0]["message"]["content"]
+    Ok(json["choices"][0]["message"]["content"]
         .as_str()
         .unwrap_or("")
-        .to_string();
+        .to_string())
+}
 
-    Ok(content)
+/// 主入口: 智能 Re-Act 循环 (生成代码版)
+///
+/// 逻辑：
+/// 1. 侦察 (Peek) -> 2. 规划 (Plan) -> 3. 编码 (Code) -> 4. 返回前端 (Return)
+/// **注意：不自动执行代码，交由用户确认。**
+pub async fn call_ai(
+    config: &AppConfig,
+    user_content: &str,
+    context_file_path: Option<String>,
+) -> Result<String> {
+    // 1. 如果没有文件上下文，直接进行普通闲聊
+    let file_path = match context_file_path {
+        Some(path) => path,
+        None => {
+            // 使用默认 System Prompt
+            let sys_prompt = load_prompt_template("system_prompt.md");
+            return llm_request(config, &sys_prompt, user_content).await;
+        }
+    };
+
+    println!("🚀 启动 Re-Act 生成流程: {}", file_path);
+
+    // --- STEP 1: 感知 (Peek) ---
+    // 调用 Python 获取前 20 行数据指纹，用于辅助决策
+    println!("👀 [Step 1] 正在侦察 Excel 结构...");
+    let peek_json_str = python::peek_excel(&file_path)
+        .await
+        .unwrap_or_else(|e| format!("{{'status': 'error', 'msg': '{}'}}", e));
+
+    // --- STEP 2: 思考 (Plan) ---
+    // 让 LLM 分析表头结构，决定 header_count
+    println!("🧠 [Step 2] 正在规划任务...");
+    let planner_tmpl = load_prompt_template("prompt_planner.md");
+    let user_msg_plan = format!(
+        "User Query: {}\nCSV Preview:\n{}",
+        user_content, peek_json_str
+    );
+    // 如果没有 planner 模板，跳过这一步（降级处理）
+    let plan_json = if !planner_tmpl.is_empty() {
+        llm_request(config, &planner_tmpl, &user_msg_plan).await?
+    } else {
+        println!("⚠️ 未找到 prompt_planner.md，跳过规划步骤");
+        "{}".to_string()
+    };
+    println!("💡 规划结果: {}", plan_json);
+
+    // --- STEP 3: 编码 (Code) ---
+    // 根据规划结果生成最终 Python 代码
+    println!("💻 [Step 3] 正在生成代码...");
+    let coder_tmpl = load_prompt_template("prompt_coder.md");
+
+    // 如果没有 coder 模板，回退到默认 prompt
+    if coder_tmpl.is_empty() {
+        let sys_prompt = load_prompt_template("system_prompt.md");
+        let fallback_ctx = format!("Target File: {}\nStructure Hint: {}", file_path, plan_json);
+        return llm_request(
+            config,
+            &sys_prompt,
+            &format!("{}\n\nContext:\n{}", user_content, fallback_ctx),
+        )
+        .await;
+    }
+
+    let user_msg_code = format!(
+        "Structure Config: {}\nUser Query: {}",
+        plan_json, user_content
+    );
+
+    // 注入文件路径
+    let coder_tmpl_filled = coder_tmpl.replace("{file_path}", &file_path.replace("\\", "\\\\"));
+
+    let code_response = llm_request(config, &coder_tmpl_filled, &user_msg_code).await?;
+
+    // --- STEP 4: 返回 (Return) ---
+    // 直接返回生成的 Markdown 代码块。
+    // 前端 UI 会识别 ```python，并显示“运行”按钮。
+    println!("✅ 代码生成完毕，等待用户确认");
+
+    // 可选：在返回内容前加一点分析摘要，让用户知道 AI 是怎么想的
+    // let final_response = format!("**分析完毕**：检测到表格结构配置为 `{}`。\n\n{}", plan_json, code_response);
+
+    // 为了保持界面简洁，直接返回代码部分即可，或者只包含必要的解释
+    Ok(code_response)
 }

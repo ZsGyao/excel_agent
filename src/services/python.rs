@@ -232,6 +232,19 @@ pub async fn run_python_code(code: &str) -> Result<String, String> {
     }
 }
 
+/// Excel 结构
+pub async fn peek_excel(file_path: &str) -> Result<String, String> {
+    let code = format!(
+        r#"
+import excel_core
+import json
+print(excel_core.peek(r"{}"))
+"#,
+        file_path
+    );
+    run_python_code(&code).await
+}
+
 /// 读取多文件上下文 (Multi-Sheet Context)
 ///
 /// # 架构变更 (Multi-Sheet Upgrade)
