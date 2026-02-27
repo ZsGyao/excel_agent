@@ -3,19 +3,64 @@ use crate::{models::AppConfig, services::excel_engine::FileSchema};
 use anyhow::Result;
 use reqwest::{self, Client};
 use serde_json::{self, json, Value};
-use std::{collections::HashMap, fs::read_to_string, path::Path}; // 确保 main.rs 中有 mod services;
+use std::{collections::HashMap, fs::read_to_string, path::Path};
+use tracing::debug; // 确保 main.rs 中有 mod services;
 
-/// 内部 helper: 读取 Prompt 模板
-fn load_prompt_template(filename: &str) -> String {
-    let path = Path::new("assets").join(filename);
-    read_to_string(path).unwrap_or_else(|_| {
-        println!("⚠️ Warning: Prompt file {} not found!", filename);
-        // 如果找不到，返回空字符串，依靠 LLM 的泛化能力
-        String::new()
-    })
-}
+const PROMPT_TEMPLATE: &str = include_str!("../../assets/prompt_coder.md");
 
-/// 内部 helper: 基础 LLM 调用
+const PANDAS_TEMPLATE: &str = r#"
+【后台极速静默模式 (Pandas / Openpyxl)】
+文件当前未被占用。
+- 【原表数据清洗/修改】：使用 `pandas` 读取，修改后使用 `to_excel` 覆盖原文件。
+- 【新建统计/透视表】：使用 `pandas` 计算，必须使用 `pd.ExcelWriter(mode='a', engine='openpyxl')` 写入该文件的新 Sheet 中，严禁覆盖原始数据 Sheet。
+- 【单元格样式修改】：强制使用 `openpyxl`。
+
+代码骨架参考：
+import pandas as pd
+try:
+    file_path = r"从JSON中获取的绝对路径"
+    print("⏳ 正在后台极速处理...")
+    df = pd.read_excel(file_path, sheet_name="从JSON中获取的Sheet名")
+    
+    # ... 你的逻辑 ...
+    
+    # 保存结果
+    with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
+        df.to_excel(writer, sheet_name="处理后的Sheet名", index=False)
+        
+    print("✨ 任务执行成功！")
+except Exception as e:
+    print(f"❌ 执行失败: {e}")
+"#;
+
+const XLWINGS_TEMPLATE: &str = r#"
+【前台热更新模式 (xlwings)】
+⚠️ 极其重要：系统检测到用户当前正在打开并浏览该 Excel 文件！
+你绝对不能使用 pandas 的 `to_excel` 或 openpyxl 的 `wb.save()`，这会触发 PermissionError。
+你必须使用 `xlwings` 连接到当前活动的 Excel 窗口进行热更新！
+
+代码骨架参考：
+import xlwings as xw
+import pandas as pd
+import os
+
+try:
+    file_path = r"从JSON中获取的绝对路径"
+    file_name = os.path.basename(file_path)
+    print("⏳ 正在通过 xlwings 连接当前打开的 Excel...")
+    
+    wb = xw.books[file_name] 
+    sheet = wb.sheets["从JSON中获取的Sheet名"]
+    
+    # ... 你的业务逻辑 (可以直接操作 sheet.range，或读入 pd.DataFrame 处理后写回) ...
+    # df = sheet.range('A1').options(pd.DataFrame, header=1, index=False, expand='table').value
+    # sheet.range('A1').options(index=False).value = df
+    
+    print("✨ Excel 界面热更新完成！请在 Excel 窗口中查看 (无需保存)。")
+except Exception as e:
+    print(f"❌ xlwings 热更新失败: {e}")
+"#;
+
 async fn llm_request(config: &AppConfig, system_prompt: &str, user_prompt: &str) -> Result<String> {
     let profile = config.active_profile();
     let api_key = &profile.api_key;
@@ -24,7 +69,6 @@ async fn llm_request(config: &AppConfig, system_prompt: &str, user_prompt: &str)
 
     let client = Client::new();
 
-    // 构造请求，保持低温以确保稳定
     let response = client
         .post(format!(
             "{}/chat/completions",
@@ -38,7 +82,7 @@ async fn llm_request(config: &AppConfig, system_prompt: &str, user_prompt: &str)
                 { "role": "system", "content": system_prompt },
                 { "role": "user", "content": user_prompt }
             ],
-            "temperature": 0.1
+            "temperature": 0.1 // 极低温度，保证代码生成的确定性
         }))
         .send()
         .await?;
@@ -54,89 +98,65 @@ async fn llm_request(config: &AppConfig, system_prompt: &str, user_prompt: &str)
         .to_string())
 }
 
-/// 主入口: 智能 Re-Act 循环 (生成代码版)
-///
-/// 逻辑：
-/// 1. 侦察 (Peek) -> 2. 规划 (Plan) -> 3. 编码 (Code) -> 4. 返回前端 (Return)
-/// **注意：不自动执行代码，交由用户确认。**
+/// 内部 helper: 清理 LLM 可能生成的 Markdown 标记
+fn clean_markdown_code(raw_code: &str) -> String {
+    let mut code = raw_code.trim().to_string();
+    if code.starts_with("```python") {
+        code = code
+            .trim_start_matches("```python")
+            .trim_start()
+            .to_string();
+    } else if code.starts_with("```") {
+        code = code.trim_start_matches("```").trim_start().to_string();
+    }
+    if code.ends_with("```") {
+        code = code.trim_end_matches("```").trim_end().to_string();
+    }
+    code
+}
+
 pub async fn call_ai(
     config: &AppConfig,
-    user_content: &str,
-    context_file_path: Option<String>,
-) -> Result<String> {
-    // 1. 如果没有文件上下文，直接进行普通闲聊
-    let file_path = match context_file_path {
-        Some(path) => path,
-        None => {
-            // 使用默认 System Prompt
-            let sys_prompt = load_prompt_template("system_prompt.md");
-            return llm_request(config, &sys_prompt, user_content).await;
-        }
-    };
-
-    println!("🚀 启动 Re-Act 生成流程: {}", file_path);
-
-    // --- STEP 1: 感知 (Peek) ---
-    // 调用 Python 获取前 20 行数据指纹，用于辅助决策
-    println!("👀 [Step 1] 正在侦察 Excel 结构...");
-    let peek_json_str = python::peek_excel(&file_path)
-        .await
-        .unwrap_or_else(|e| format!("{{'status': 'error', 'msg': '{}'}}", e));
-
-    // --- STEP 2: 思考 (Plan) ---
-    // 让 LLM 分析表头结构，决定 header_count
-    println!("🧠 [Step 2] 正在规划任务...");
-    let planner_tmpl = load_prompt_template("prompt_planner.md");
-    let user_msg_plan = format!(
-        "User Query: {}\nCSV Preview:\n{}",
-        user_content, peek_json_str
-    );
-    // 如果没有 planner 模板，跳过这一步（降级处理）
-    let plan_json = if !planner_tmpl.is_empty() {
-        llm_request(config, &planner_tmpl, &user_msg_plan).await?
+    user_query: &str,
+    schema_json: &str,
+    is_file_opened: bool, // 🌟 接收来自 Rust 探针的情报
+) -> Result<String, String> {
+    // 1. 根据探针结果，选择注入哪个底层模板
+    let target_template = if is_file_opened {
+        XLWINGS_TEMPLATE
     } else {
-        println!("⚠️ 未找到 prompt_planner.md，跳过规划步骤");
-        "{}".to_string()
+        PANDAS_TEMPLATE
     };
-    println!("💡 规划结果: {}", plan_json);
 
-    // --- STEP 3: 编码 (Code) ---
-    // 根据规划结果生成最终 Python 代码
-    println!("💻 [Step 3] 正在生成代码...");
-    let coder_tmpl = load_prompt_template("prompt_coder.md");
+    // 2. 组装 System Prompt
+    // 将占位符替换掉。因为我们把 user_query 放在 user 角色里发，
+    // 所以把模板里的 {{USER_QUERY}} 替换为空，保持 System Prompt 纯净。
+    let system_prompt = PROMPT_TEMPLATE
+        .replace("{{SCHEMA_JSON}}", schema_json)
+        .replace("{{EXECUTION_TEMPLATE}}", target_template)
+        .replace("{{USER_QUERY}}", "");
 
-    // 如果没有 coder 模板，回退到默认 prompt
-    if coder_tmpl.is_empty() {
-        let sys_prompt = load_prompt_template("system_prompt.md");
-        let fallback_ctx = format!("Target File: {}\nStructure Hint: {}", file_path, plan_json);
-        return llm_request(
-            config,
-            &sys_prompt,
-            &format!("{}\n\nContext:\n{}", user_content, fallback_ctx),
-        )
-        .await;
+    println!("🧠 [AI 思考中] 正在根据最新脱水 JSON 生成代码...");
+    if is_file_opened {
+        println!("🔥 [AI 模式] 挂载热更新 xlwings 引擎");
+    } else {
+        println!("⚡ [AI 模式] 挂载后台静默 pandas 引擎");
     }
 
-    let user_msg_code = format!(
-        "Structure Config: {}\nUser Query: {}",
-        plan_json, user_content
-    );
+    debug!("----- SYSTEM PROMPT: --------\n {:?}\n", system_prompt);
 
-    // 注入文件路径
-    let coder_tmpl_filled = coder_tmpl.replace("{file_path}", &file_path.replace("\\", "\\\\"));
+    // 3. 发送请求
+    match llm_request(config, &system_prompt, user_query).await {
+        Ok(raw_response) => {
+            debug!("----- LLM REQUEST: --------\n {:?}\n", raw_response);
 
-    let code_response = llm_request(config, &coder_tmpl_filled, &user_msg_code).await?;
-
-    // --- STEP 4: 返回 (Return) ---
-    // 直接返回生成的 Markdown 代码块。
-    // 前端 UI 会识别 ```python，并显示“运行”按钮。
-    println!("✅ 代码生成完毕，等待用户确认");
-
-    // 可选：在返回内容前加一点分析摘要，让用户知道 AI 是怎么想的
-    // let final_response = format!("**分析完毕**：检测到表格结构配置为 `{}`。\n\n{}", plan_json, code_response);
-
-    // 为了保持界面简洁，直接返回代码部分即可，或者只包含必要的解释
-    Ok(code_response)
+            // 4. 清洗代码（防止大模型强行输出 ```python 标记导致 exec 报错）
+            let clean_code = clean_markdown_code(&raw_response);
+            println!("✅ [AI 响应] 代码生成完毕！");
+            Ok(clean_code)
+        }
+        Err(e) => Err(format!("网络请求失败: {}", e)),
+    }
 }
 
 /// 核心组装逻辑：将底层的复杂 FileSchema 转化为 AI 专用的精简版 JSON
