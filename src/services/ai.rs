@@ -1,9 +1,9 @@
-use crate::models::AppConfig;
 use crate::services::python;
+use crate::{models::AppConfig, services::excel_engine::FileSchema};
 use anyhow::Result;
 use reqwest::{self, Client};
 use serde_json::{self, json, Value};
-use std::{fs::read_to_string, path::Path}; // 确保 main.rs 中有 mod services;
+use std::{collections::HashMap, fs::read_to_string, path::Path}; // 确保 main.rs 中有 mod services;
 
 /// 内部 helper: 读取 Prompt 模板
 fn load_prompt_template(filename: &str) -> String {
@@ -137,4 +137,51 @@ pub async fn call_ai(
 
     // 为了保持界面简洁，直接返回代码部分即可，或者只包含必要的解释
     Ok(code_response)
+}
+
+/// 核心组装逻辑：将底层的复杂 FileSchema 转化为 AI 专用的精简版 JSON
+pub fn generate_dehydrated_schema_json(active_schemas: &HashMap<String, FileSchema>) -> String {
+    let mut context_map = serde_json::Map::new();
+
+    for (file_path, file_schema) in active_schemas {
+        // 1. 提取文件名 (把冗长的 D:\XXX\报名表.xlsx 变成 报名表.xlsx，给 AI 减负)
+        let file_name = std::path::Path::new(file_path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        let mut sheets_map = serde_json::Map::new();
+
+        for (sheet_name, sheet_schema) in &file_schema.sheets {
+            // 2. 剥离物理结构：把 ColumnMapping 数组，变成纯纯的 String 数组
+            let clean_columns: Vec<String> = sheet_schema
+                .columns
+                .iter()
+                .map(|c| c.semantic_name.clone())
+                .collect();
+
+            // 3. 使用 json! 宏，像写 JS 一样自由拼装我们想要的层级
+            let sheet_json = json!({
+                "data_start_row": sheet_schema.data_start_row,
+                "total_rows": sheet_schema.total_rows,
+                "columns": clean_columns, // 只有名字，没有坐标！
+                "preview_data": sheet_schema.preview_data // 前3行的预览数据
+            });
+
+            sheets_map.insert(sheet_name.clone(), sheet_json);
+        }
+
+        // 4. 将所有的 sheet 塞入这个文件节点下
+        let file_json = json!({
+            "sheets": sheets_map
+        });
+
+        // 5. 将文件节点塞入全局上下文中
+        context_map.insert(file_name, file_json);
+    }
+
+    // 将组装好的 JSON 对象转换为漂亮的带缩进的字符串
+    let final_json = Value::Object(context_map);
+    serde_json::to_string_pretty(&final_json).unwrap_or_default()
 }

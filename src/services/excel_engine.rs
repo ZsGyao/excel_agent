@@ -91,10 +91,10 @@ impl ExcelEngine {
         let width = range.width();
         let height = range.height();
 
-        // 修复点 1：取实际行数和预设表头行数的较小值，防止越界
+        // 取实际行数和预设表头行数的较小值，防止越界
         let actual_header_rows = std::cmp::min(height, header_rows);
 
-        // 修复点 2：只有当表格完全为空时，才跳过解析
+        // 只有当表格完全为空时，才跳过解析
         if width == 0 || actual_header_rows == 0 {
             return SheetSchema {
                 sheet_name: sheet_name.to_string(),
