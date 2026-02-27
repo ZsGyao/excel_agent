@@ -4,6 +4,7 @@ mod components;
 mod models;
 mod services;
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
@@ -17,8 +18,10 @@ use dioxus::prelude::*;
 use futures_util::StreamExt;
 
 use crate::components::dock_capsule::DockCapsule;
-use crate::models::{ActionStatus, WindowMode};
+use crate::components::import_modals::ImportModal;
+use crate::models::{ActionStatus, PendingImport, WindowMode};
 use crate::services::config::load_config;
+use crate::services::excel_engine::{ExcelEngine, FileSchema};
 use crate::services::python::{create_batch_backups, run_batch_hot_undo, run_python_code};
 use components::{chat_view::ChatView, input_area::InputArea, settings::Settings};
 use models::ChatMessage;
@@ -391,6 +394,9 @@ fn App() -> Element {
     // 错误修复信号
     let mut error_fix_signal = use_signal(|| None::<String>);
     let mut retry_count = use_signal(|| 0);
+
+    let mut pending_import = use_signal(|| None::<PendingImport>);
+    let mut global_schemas = use_signal(|| HashMap::<String, FileSchema>::new());
     const MAX_RETRIES: i32 = 3;
 
     // 文件处理通道
@@ -426,9 +432,50 @@ fn App() -> Element {
                 .await
             {
                 let full_path = path.path().to_string_lossy().to_string();
-                tx_files.send(full_path);
+                tx_files.send(full_path.clone());
+
+                match ExcelEngine::get_sheet_names(&full_path) {
+                    Ok(sheet_names) => {
+                        pending_import.set(Some(PendingImport::new(full_path, sheet_names)));
+                    }
+                    Err(e) => {
+                        println!("读取Excel失败: {}", e);
+                    }
+                }
             }
         });
+    };
+
+    // 弹窗确认逻辑：用户配好表头行数，点击“确认导入”
+    let mut handle_import_confirm =
+        move |(file_path, sheet_configs): (String, HashMap<String, usize>)| {
+            spawn(async move {
+                // 调用 Rust 引擎进行精准重度解析
+                match ExcelEngine::parse_file_with_config(&file_path, &sheet_configs) {
+                    Ok(schema) => {
+                        // 1. 存入全局记忆库
+                        global_schemas.write().insert(file_path.clone(), schema);
+
+                        // 2. 将文件加入活跃列表
+                        let mut files = active_files.write();
+                        if !files.contains(&file_path) {
+                            files.push(file_path);
+                        }
+
+                        // 3. 关闭弹窗
+                        pending_import.set(None);
+                    }
+                    Err(e) => {
+                        println!("精准解析失败: {}", e);
+                        pending_import.set(None);
+                    }
+                }
+            });
+        };
+
+    // 弹窗取消逻辑
+    let mut handle_import_cancel = move || {
+        pending_import.set(None); // 直接关闭弹窗
     };
 
     // 🔥 1. Confirm 回调
@@ -566,7 +613,7 @@ fn App() -> Element {
     };
 
     // 清空所有文件
-    let mut clear_all_files = move |_| {
+    let clear_all_files = move |_| {
         active_files.write().clear();
     };
 
@@ -699,8 +746,15 @@ fn App() -> Element {
                             on_open_file: open_file_dialog,
                         }
                     }
+                } // <--- app-container 结束
+                if pending_import.read().is_some() {
+                    ImportModal {
+                        pending_import,
+                        on_confirm: handle_import_confirm,
+                        on_cancel: handle_import_cancel,
+                    }
                 }
-            }
+            } // <--- main-panel 结束
         }
     }
 }

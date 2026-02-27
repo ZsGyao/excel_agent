@@ -1051,3 +1051,206 @@ pre code.hljs {
 .comic-btn.secondary:hover {
     background: #eee;
 }
+
+/* =========================================================================
+   导入配置弹窗样式 (Import Modal)
+   ========================================================================= */
+
+/* 1. 全屏毛玻璃遮罩层 */
+.import-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(8px);
+    /* 毛玻璃模糊 */
+    -webkit-backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 99999;
+    /* 无敌层级，盖住一切 */
+    animation: fadeIn 0.2s ease-out;
+}
+
+/* 2. 居中的弹窗本体 */
+.import-modal-container {
+    background-color: #1f2937;
+    /* 深灰背景 */
+    border-radius: 12px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    width: 90%;
+    max-width: 480px;
+    border: 1px solid #374151;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: slideUp 0.3s ease-out;
+    font-family: system-ui, -apple-system, sans-serif;
+}
+
+/* 3. 头部区域 */
+.import-modal-header {
+    padding: 20px 24px;
+    border-bottom: 1px solid #374151;
+    background-color: rgba(31, 41, 55, 0.8);
+}
+
+.import-modal-title {
+    font-size: 20px;
+    font-weight: 600;
+    color: #f3f4f6;
+    margin: 0 0 8px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.import-modal-subtitle {
+    font-size: 13px;
+    color: #9ca3af;
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 4. 内容列表区 */
+.import-modal-body {
+    padding: 24px;
+    max-height: 50vh;
+    overflow-y: auto;
+}
+
+.import-modal-desc {
+    font-size: 14px;
+    color: #d1d5db;
+    margin: 0 0 16px 0;
+}
+
+.import-modal-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background-color: #111827;
+    padding: 12px 16px;
+    border-radius: 8px;
+    border: 1px solid #374151;
+    margin-bottom: 12px;
+    transition: background-color 0.2s;
+}
+
+.import-modal-item:hover {
+    background-color: #374151;
+}
+
+.import-modal-item-name {
+    font-size: 14px;
+    color: #e5e7eb;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* 5. 输入框 */
+.import-modal-input-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.import-modal-input-group span {
+    font-size: 12px;
+    color: #9ca3af;
+}
+
+.import-modal-input {
+    width: 50px;
+    background-color: #1f2937;
+    color: white;
+    text-align: center;
+    font-weight: bold;
+    border: 1px solid #4b5563;
+    border-radius: 4px;
+    padding: 6px 8px;
+    outline: none;
+    transition: all 0.2s;
+}
+
+.import-modal-input:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4);
+}
+
+/* 6. 底部操作区 */
+.import-modal-footer {
+    padding: 16px 24px;
+    border-top: 1px solid #374151;
+    background-color: rgba(31, 41, 55, 0.8);
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+}
+
+.btn-cancel {
+    padding: 8px 16px;
+    font-size: 14px;
+    color: #d1d5db;
+    background-color: transparent;
+    border: 1px solid #4b5563;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-cancel:hover {
+    background-color: #374151;
+    color: white;
+}
+
+.btn-confirm {
+    padding: 8px 16px;
+    font-size: 14px;
+    font-weight: bold;
+    color: white;
+    background: linear-gradient(to right, #2563eb, #1d4ed8);
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.3);
+    transition: all 0.2s;
+}
+
+.btn-confirm:hover {
+    transform: scale(1.02);
+}
+
+.btn-confirm:active {
+    transform: scale(0.98);
+}
+
+/* 7. 炫酷入场动画 */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px) scale(0.95);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}

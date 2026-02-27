@@ -148,3 +148,22 @@ impl AppConfig {
             .unwrap_or_else(|| ModelProfile::new())
     }
 }
+
+/// 用于记录用户选择文件后，等待配置表头行数的状态
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingImport {
+    pub file_path: String,
+    /// 存放 (Sheet名称, 默认表头行数) 的列表
+    /// 使用 Vec 而不是 HashMap 是为了在 UI 渲染时保持固定的顺序
+    pub sheets: Vec<(String, usize)>,
+}
+
+impl PendingImport {
+    pub fn new(file_path: String, sheet_names: Vec<String>) -> Self {
+        Self {
+            file_path,
+            // 默认每个 Sheet 的表头行数都是 1
+            sheets: sheet_names.into_iter().map(|name| (name, 1)).collect(),
+        }
+    }
+}
