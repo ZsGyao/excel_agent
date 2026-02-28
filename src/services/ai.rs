@@ -1,30 +1,51 @@
-use crate::services::python;
 use crate::{models::AppConfig, services::excel_engine::FileSchema};
 use anyhow::Result;
 use reqwest::{self, Client};
 use serde_json::{self, json, Value};
-use std::{collections::HashMap, fs::read_to_string, path::Path};
+use std::collections::HashMap;
 use tracing::debug; // 确保 main.rs 中有 mod services;
 
 const PROMPT_TEMPLATE: &str = include_str!("../../assets/prompt_coder.md");
 
 const PANDAS_TEMPLATE: &str = r#"
-【后台极速静默模式 (Pandas / Openpyxl)】
-文件当前未被占用。
-- 【原表数据清洗/修改】：使用 `pandas` 读取，修改后使用 `to_excel` 覆盖原文件。
-- 【新建统计/透视表】：使用 `pandas` 计算，必须使用 `pd.ExcelWriter(mode='a', engine='openpyxl')` 写入该文件的新 Sheet 中，严禁覆盖原始数据 Sheet。
-- 【单元格样式修改】：强制使用 `openpyxl`。
-
+【后台极速静默模式 (Pandas)】
 代码骨架参考：
 import pandas as pd
+
+def get_real_col(df, semantic_name):
+        """精准拆分函数：依靠特殊契约符号 ||| 还原最底层的真实物理列名"""
+        # 如果大模型自作聪明传了短名字，刚好匹配上，直接返回
+        if semantic_name in df.columns:
+            return semantic_name
+            
+        # 核心逻辑：用我们约定的特殊符号拆分，取数组的最后一部分！
+        # 例如: "总表|||二级表\r\n说明|||消保信访".split("|||")[-1] => "消保信访"
+        # 这样 100% 保留了原有的换行符、空格等任何特殊字符
+        physical_col = semantic_name.split("@|||@")[-1]
+        
+        # 遍历真实的 DataFrame 列名进行绝对相等的比对
+        for col in df.columns:
+            if str(col) == physical_col:
+                return col
+                
+        # 兜底返回
+        return physical_col
+
 try:
-    file_path = r"从JSON中获取的绝对路径"
+    # 路径直接从 JSON Key 复制，不要瞎编
+    file_path = r"绝对路径"
     print("⏳ 正在后台极速处理...")
-    df = pd.read_excel(file_path, sheet_name="从JSON中获取的Sheet名")
     
-    # ... 你的逻辑 ...
+    # 获取表头所在的物理行 (JSON 中的 data_start_row - 1)
+    df = pd.read_excel(file_path, sheet_name="Sheet名", header=2) # 假设 data_start_row 是 3，则 header 是 2
     
-    # 保存结果
+    # 示例：获取真实列名
+    # real_col = get_real_col(df, "JSON里那个巨长的列名")
+    # df[real_col] = ...
+    
+    # ... 你的业务逻辑 ...
+    
+    print("💾 正在保存结果...")
     with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
         df.to_excel(writer, sheet_name="处理后的Sheet名", index=False)
         
@@ -35,30 +56,62 @@ except Exception as e:
 
 const XLWINGS_TEMPLATE: &str = r#"
 【前台热更新模式 (xlwings)】
-⚠️ 极其重要：系统检测到用户当前正在打开并浏览该 Excel 文件！
-你绝对不能使用 pandas 的 `to_excel` 或 openpyxl 的 `wb.save()`，这会触发 PermissionError。
-你必须使用 `xlwings` 连接到当前活动的 Excel 窗口进行热更新！
+⚠️ 必须使用 xlwings，但数据处理必须依托 pandas！严禁直接使用 sheet.range() 循环修改单个单元格！
 
 代码骨架参考：
-import xlwings as xw
-import pandas as pd
-import os
+import pythoncom
+# 初始化当前线程的 Windows COM 组件
+pythoncom.CoInitialize()
 
 try:
-    file_path = r"从JSON中获取的绝对路径"
+    import xlwings as xw
+    import pandas as pd
+    import os
+
+    def get_real_col(df, semantic_name):
+        """精准拆分函数：完全信任约定契约，绝不破坏用户原始数据的任何空格或符号"""
+        if semantic_name in df.columns:
+            return semantic_name
+            
+        # 1. 绝对精准还原
+        physical_col = semantic_name.split("@|||@")[-1]
+        if physical_col in df.columns:
+            return physical_col
+            
+        # 2. 极端兜底 (防止 Pandas 给同名列加了 .1 后缀，或 Excel 物理表头真的带有不可见的回车)
+        for col in df.columns:
+            if str(col).strip() == physical_col.strip():
+                return col
+                
+        return physical_col
+
+    file_path = r"绝对路径"
     file_name = os.path.basename(file_path)
     print("⏳ 正在通过 xlwings 连接当前打开的 Excel...")
     
     wb = xw.books[file_name] 
-    sheet = wb.sheets["从JSON中获取的Sheet名"]
+    sheet = wb.sheets["Sheet名"]
     
-    # ... 你的业务逻辑 (可以直接操作 sheet.range，或读入 pd.DataFrame 处理后写回) ...
-    # df = sheet.range('A1').options(pd.DataFrame, header=1, index=False, expand='table').value
-    # sheet.range('A1').options(index=False).value = df
+    start_row = 3 # 替换为真实的 data_start_row
+    
+    # 🌟 核心修复：放弃脆弱的 expand='table'，使用 used_range 绝对物理坐标锁定整个表格区域！
+    max_row = sheet.used_range.last_cell.row
+    max_col = sheet.used_range.last_cell.column
+    df = sheet.range((start_row, 1), (max_row, max_col)).options(pd.DataFrame, header=1, index=False).value
+    
+    # 2. 匹配真实列名并处理业务逻辑
+    # real_col_1 = get_real_col(df, "长列名1")
+    # ...
+    
+    # 3. 整体写回
+    sheet.range((start_row, 1)).options(index=False).value = df
     
     print("✨ Excel 界面热更新完成！请在 Excel 窗口中查看 (无需保存)。")
 except Exception as e:
     print(f"❌ xlwings 热更新失败: {e}")
+finally:
+    # 释放当前线程的 COM 资源
+    pythoncom.CoUninitialize()
 "#;
 
 async fn llm_request(config: &AppConfig, system_prompt: &str, user_prompt: &str) -> Result<String> {
@@ -82,7 +135,8 @@ async fn llm_request(config: &AppConfig, system_prompt: &str, user_prompt: &str)
                 { "role": "system", "content": system_prompt },
                 { "role": "user", "content": user_prompt }
             ],
-            "temperature": 0.1 // 极低温度，保证代码生成的确定性
+            "temperature": 0.1, // 极低温度，保证代码生成的确定性
+            "max_tokens": 4096
         }))
         .send()
         .await?;
@@ -134,7 +188,7 @@ pub async fn call_ai(
     let system_prompt = PROMPT_TEMPLATE
         .replace("{{SCHEMA_JSON}}", schema_json)
         .replace("{{EXECUTION_TEMPLATE}}", target_template)
-        .replace("{{USER_QUERY}}", "");
+        .replace("{{USER_QUERY}}", user_query);
 
     println!("🧠 [AI 思考中] 正在根据最新脱水 JSON 生成代码...");
     if is_file_opened {
@@ -164,13 +218,6 @@ pub fn generate_dehydrated_schema_json(active_schemas: &HashMap<String, FileSche
     let mut context_map = serde_json::Map::new();
 
     for (file_path, file_schema) in active_schemas {
-        // 1. 提取文件名 (把冗长的 D:\XXX\报名表.xlsx 变成 报名表.xlsx，给 AI 减负)
-        let file_name = std::path::Path::new(file_path)
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-
         let mut sheets_map = serde_json::Map::new();
 
         for (sheet_name, sheet_schema) in &file_schema.sheets {
@@ -198,7 +245,7 @@ pub fn generate_dehydrated_schema_json(active_schemas: &HashMap<String, FileSche
         });
 
         // 5. 将文件节点塞入全局上下文中
-        context_map.insert(file_name, file_json);
+        context_map.insert(file_path.clone(), file_json);
     }
 
     // 将组装好的 JSON 对象转换为漂亮的带缩进的字符串

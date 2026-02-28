@@ -28,6 +28,8 @@ pub struct FileSchema {
 
 // ----------------------- 2. 核心解析逻辑 -------------------------------
 
+const SHEET_JOIN_STR: &str = "@|||@";
+
 pub struct ExcelEngine;
 
 impl ExcelEngine {
@@ -149,7 +151,7 @@ impl ExcelEngine {
             let semantic_name = if path_nodes.is_empty() {
                 format!("Unnamed_Col_{}", c)
             } else {
-                path_nodes.join(" - ")
+                path_nodes.join(SHEET_JOIN_STR)
             };
 
             columns.push(ColumnMapping {

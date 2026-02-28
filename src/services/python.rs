@@ -73,11 +73,22 @@ pub fn init_python_env() {
             env::set_var("PYTHONPATH", &new_python_path);
 
             // 设置 xlwings License，防止报错
-            env::set_var("XLWINGS_LICENSE_KEY", "non-commercial");
+            // env::set_var("XLWINGS_LICENSE_KEY", "non-commercial");
 
-            // 可选：把 py_env 也加到系统 PATH 里
+            // 把 py_env 也加到系统 PATH 里
+            let pywin32_sys = site_packages.join("pywin32_system32");
+            let win32_dir = site_packages.join("win32");
+            let win32_lib = site_packages.join("win32").join("lib");
+
             if let Ok(path) = env::var("PATH") {
-                let new_path = format!("{};{}", py_env_path.display(), path);
+                let new_path = format!(
+                    "{};{};{};{};{}",
+                    py_env_path.display(),
+                    pywin32_sys.display(),
+                    win32_dir.display(),
+                    win32_lib.display(),
+                    path
+                );
                 env::set_var("PATH", new_path);
             }
         }
@@ -85,6 +96,35 @@ pub fn init_python_env() {
         // 初始化 PyO3 解释器
         pyo3::prepare_freethreaded_python();
         println!("🐍 Python 解释器初始化完成");
+
+        Python::with_gil(|py| {
+            let init_code = r#"
+import sys
+import os
+
+# 1. 强行剥夺嵌入式身份，伪装成原生的 python.exe
+sys.frozen = False
+sys.executable = os.path.join(sys.base_exec_prefix, "python.exe")
+sys._base_executable = sys.executable
+
+if not hasattr(sys, 'argv') or not sys.argv:
+    sys.argv = ['']
+
+# 2. 🌟 提前“排雷”：在主线程把会报错的库全部初始化一遍！
+try:
+    import asyncio
+    import pythoncom
+    import xlwings
+    import pandas
+except Exception as e:
+    print(f"⚠️ 预加载模块出现警告: {e}")
+"#;
+            if let Err(e) = py.run(init_code, None, None) {
+                println!("⚠️ Python 预热失败: {}", e);
+            } else {
+                println!("🛡️ Python 底层环境伪装及预热完毕 (彻底免疫线程信号崩溃)");
+            }
+        });
     });
 }
 

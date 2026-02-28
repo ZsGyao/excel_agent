@@ -11,11 +11,13 @@ pub fn on_confirm(mut state: AppState, msg_id: usize) {
     // 1. 瞬间获取消息状态和环境上下文，立刻释放锁
     let (mut code_opt, user_query, current_files, has_existing_backup) = {
         let mut msgs = state.messages.write();
-        let user_query = if msg_id > 0 {
-            msgs[msg_id - 1].text.clone()
+
+        let extracted_query = if msg_id > 0 {
+            msgs[msg_id - 1].text.clone() // 拿到用户的提问
         } else {
             String::new()
         };
+
         let msg = &mut msgs[msg_id];
 
         // 如果已经有代码了，直接标记为运行中
@@ -25,7 +27,7 @@ pub fn on_confirm(mut state: AppState, msg_id: usize) {
 
         (
             msg.pending_code.clone(),
-            msg.text.clone(), // 用户的自然语言提问
+            extracted_query, // ✅ 修复：把正确的提问传出去！
             state.active_files.read().clone(),
             msg.backup_paths.is_some(),
         )
