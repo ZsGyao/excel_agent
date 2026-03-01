@@ -56,61 +56,100 @@ except Exception as e:
 
 const XLWINGS_TEMPLATE: &str = r#"
 【前台热更新模式 (xlwings)】
-⚠️ 必须使用 xlwings，但数据处理必须依托 pandas！严禁直接使用 sheet.range() 循环修改单个单元格！
+⚠️ 必须使用 xlwings！必须调用提供的 load_safe_df 函数安全加载数据！
 
-代码骨架参考：
 import pythoncom
-# 初始化当前线程的 Windows COM 组件
+# 初始化当前线程的 Windows COM 组件（防止 Rust Tokio 异步多线程调用 Excel 时崩溃）
 pythoncom.CoInitialize()
 
 try:
     import xlwings as xw
     import pandas as pd
     import os
+    import json
 
-    def get_real_col(df, semantic_name):
-        """精准拆分函数：完全信任约定契约，绝不破坏用户原始数据的任何空格或符号"""
-        if semantic_name in df.columns:
-            return semantic_name
+    # ==========================================
+    # 核心机制 1：后期绑定数据字典
+    # ==========================================
+    # ⚠️ 绝对禁止 AI 修改这行代码的占位符！
+    # 解释：由 Rust 底层在执行代码的前一毫秒，将真实的上万字 JSON 瞬间替换到这个词里。
+    # 目的：防止 AI 抄写巨长 JSON 时发生截断（SyntaxError）。
+    schema_json = json.loads(r'''{{SCHEMA_JSON}}''')
+    
+    # ==========================================
+    # 核心机制 2：安全读取引擎（绕过合并单元格）
+    # ==========================================
+    def load_safe_df(wb, file_path, sheet_name):
+        """安全读取指定 Sheet 的纯数据，并强制赋予全语义字典表头"""
+        # 1. 从注入的字典中提取该表的元数据
+        sheet_schema = schema_json[file_path]["sheets"][sheet_name]
+        start_row = sheet_schema["data_start_row"] + 1
+        semantic_columns = sheet_schema["columns"]
+        
+        sheet = wb.sheets[sheet_name]
+        
+        # 2. 【防 OOM 炸弹】：用 Rust 提取的真实行数做上限，防止 Excel 幽灵空行撑爆内存
+        safe_max_row = start_row + sheet_schema["total_rows"] - 1
+        max_row = min(sheet.used_range.last_cell.row, safe_max_row)
+        max_col = len(semantic_columns)
+        
+        # 如果是空表，直接返回带好表头的空 DataFrame
+        if max_row < start_row: 
+            return pd.DataFrame(columns=semantic_columns)
             
-        # 1. 绝对精准还原
-        physical_col = semantic_name.split("@|||@")[-1]
-        if physical_col in df.columns:
-            return physical_col
-            
-        # 2. 极端兜底 (防止 Pandas 给同名列加了 .1 后缀，或 Excel 物理表头真的带有不可见的回车)
+        # 3. 【无视合并单元格】：绝对物理坐标框选，跳过所有表头（header=False），只读纯数据！
+        df = sheet.range((start_row, 1), (max_row, max_col)).options(pd.DataFrame, header=False, index=False).value
+        
+        # 4. 【维度防撕裂】：防止用户在表末尾乱敲空格，强行按字典长度截断数据列
+        df = df.iloc[:, :len(semantic_columns)]
+        
+        # 5. 【强行戴帽子】：把字典里绝对正确的超长语义列名，盖在纯数据头上
+        df.columns = semantic_columns
+        return df
+
+    # ==========================================
+    # 核心机制 3：AI 幻觉拯救器（短名寻路导弹）
+    # ==========================================
+    def get_col_name(df, keyword):
+        """让 AI 只需传入最短的物理列名（如'部门'），自动匹配出超长语义列名"""
+        # 第一优先级：精确匹配契约符号 @|||@ 拆分后的最后一部分
         for col in df.columns:
-            if str(col).strip() == physical_col.strip():
+            if str(col).split("@|||@")[-1].strip() == keyword.strip(): 
                 return col
-                
-        return physical_col
+        # 第二优先级：模糊包含匹配
+        for col in df.columns:
+            if keyword.strip() in str(col): 
+                return col
+        # 兜底：原样返回，让 Pandas 报错提醒
+        return keyword
 
-    file_path = r"绝对路径"
-    file_name = os.path.basename(file_path)
-    print("⏳ 正在通过 xlwings 连接当前打开的 Excel...")
+    print("⏳ 正在通过 xlwings 连接 Excel 引擎...")
     
-    wb = xw.books[file_name] 
-    sheet = wb.sheets["Sheet名"]
-    
-    start_row = 3 # 替换为真实的 data_start_row
-    
-    # 🌟 核心修复：放弃脆弱的 expand='table'，使用 used_range 绝对物理坐标锁定整个表格区域！
-    max_row = sheet.used_range.last_cell.row
-    max_col = sheet.used_range.last_cell.column
-    df = sheet.range((start_row, 1), (max_row, max_col)).options(pd.DataFrame, header=1, index=False).value
-    
-    # 2. 匹配真实列名并处理业务逻辑
-    # real_col_1 = get_real_col(df, "长列名1")
-    # ...
-    
-    # 3. 整体写回
-    sheet.range((start_row, 1)).options(index=False).value = df
-    
-    print("✨ Excel 界面热更新完成！请在 Excel 窗口中查看 (无需保存)。")
+    # ==========================================
+    # 🤖 AI 业务代码区 (以下由 AI 动态生成)
+    # ==========================================
+    # 示例：获取当前处理的文件路径并连接 Workbook
+    # file_path = list(schema_json.keys())[0]  
+    # wb = xw.Book(file_path)
+    # df = load_safe_df(wb, file_path, "Sheet1")
+    # 
+    # 【需求示例：清空“消保信访”列中不等于“2026学习”的数据】
+    # col_full_name = get_col_name(df, "消保信访")
+    # df.loc[df[col_full_name] != '2026学习', col_full_name] = ""
+    # 
+    # 【安全写回示例（极其重要）】
+    # 算出该列在 Excel 中的绝对物理列号 (从 1 开始算，所以要 +1)
+    # col_idx = list(df.columns).index(col_full_name) + 1
+    # 仅把修改后的这一列怼回原位，绝不覆盖其他地方的公式和格式！
+    # sheet = wb.sheets["Sheet1"]
+    # sheet.range((start_row, col_idx)).options(index=False, header=False).value = df[col_full_name].values.reshape(-1, 1)
+    # ==========================================
+
+    print("✨ Excel 界面热更新完成！")
 except Exception as e:
     print(f"❌ xlwings 热更新失败: {e}")
 finally:
-    # 释放当前线程的 COM 资源
+    # 无论成功失败，必须释放 COM 锁，否则 Excel 进程会残留
     pythoncom.CoUninitialize()
 "#;
 
@@ -207,7 +246,8 @@ pub async fn call_ai(
             // 4. 清洗代码（防止大模型强行输出 ```python 标记导致 exec 报错）
             let clean_code = clean_markdown_code(&raw_response);
             println!("✅ [AI 响应] 代码生成完毕！");
-            Ok(clean_code)
+            let executable_code = clean_code.replace("{{SCHEMA_JSON}}", &schema_json);
+            Ok(executable_code)
         }
         Err(e) => Err(format!("网络请求失败: {}", e)),
     }
