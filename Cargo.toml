@@ -29,7 +29,7 @@ futures-util = "0.3"
 rfd = "0.17"
 zip = "7.3.0" # 用于解压
 calamine = "0.24.0"
-regex = "1.10"
+base64 = "0.22"
 
 [features]
 default = ["desktop"]

@@ -3,8 +3,9 @@ use crate::{
     services::excel_engine::{FileSchema, SHEET_JOIN_STR},
 };
 use anyhow::Result;
-use regex::Regex;
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use reqwest::{self, Client};
+use serde::Deserialize;
 use serde_json::{self, json, Value};
 use std::{collections::HashMap, fs, path::PathBuf, sync::OnceLock};
 use tracing::{debug, info}; // 确保 main.rs 中有 mod services;
@@ -14,43 +15,52 @@ const CODER_PROMPT: &str = include_str!("../../assets/prompts/coder.md");
 const UNIVERSAL_SANDBOX_TEMPLATE: &str =
     include_str!("../../assets/templates/universal_sandbox.py");
 
-/// 全局静态正则引擎，使用 OnceLock 确保只编译一次，提升高并发下的执行性能。
-static REF_REGEX: OnceLock<Regex> = OnceLock::new();
+#[derive(Deserialize, Debug)]
+pub struct ChatPayload {
+    pub raw_query: String,
+    pub mentions: Vec<MentionData>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct MentionData {
+    pub placeholder: String,
+    pub file: String,
+    pub sheet: String,
+    pub col: String,
+}
 
 /// 🚀 后端指令解包拦截器 (增强版：支持层级分类识别)
 ///
 /// # 参数
 /// * `raw_query` - 原始查询字符串
 /// * `schemas` - 全局文件 Schema 映射，用于校验引用是“具体列”还是“分类节点”
-pub fn preprocess_query_with_refs(
-    raw_query: &str,
-    schemas: &HashMap<String, FileSchema>,
-) -> String {
-    let re = REF_REGEX.get_or_init(|| {
-        Regex::new(r"\[\[REF:(.*?)\|(.*?)\|(.*?)\]\]").expect("REF_REGEX 编译失败")
-    });
+pub fn parse_structured_query(json_payload: &str, schemas: &HashMap<String, FileSchema>) -> String {
+    // 假设 payload 已经解析完毕...
+    let payload: ChatPayload = match serde_json::from_str(json_payload) {
+        Ok(p) => p,
+        Err(_) => return json_payload.to_string(),
+    };
 
-    if !re.is_match(raw_query) {
-        return raw_query.to_string();
-    }
+    let mut system_hints = String::from("【⚠️ 确定性操作指令】\n");
+    let mut final_query = payload.raw_query.clone();
 
-    let mut system_hints = String::from(
-        "【⚠️ 确定性操作指令 - 优先级最高 ⚠️】\n\
-        用户已在 GUI 界面明确锁定了以下物理操作目标。你必须直接使用这些绝对路径：\n",
-    );
+    for mention in payload.mentions {
+        // 🌟 核心：解码 Base64，此时反斜杠 \ 和换行 \r\n 完美重生！
+        let file_path =
+            String::from_utf8(B64.decode(&mention.file).unwrap_or_default()).unwrap_or_default();
+        let sheet_name =
+            String::from_utf8(B64.decode(&mention.sheet).unwrap_or_default()).unwrap_or_default();
+        let col_path =
+            String::from_utf8(B64.decode(&mention.col).unwrap_or_default()).unwrap_or_default();
 
-    let processed_query = re.replace_all(raw_query, |caps: &regex::Captures| {
-        let file_path = &caps[1];
-        let sheet_name = &caps[2];
-        let col_path = &caps[3];
+        let replacement_text;
 
         if !col_path.is_empty() {
-            // 🌟 核心逻辑：判断当前引用是“叶子列”还是“分类前缀”
             let mut is_category = false;
-            if let Some(file_schema) = schemas.get(file_path) {
-                if let Some(sheet_schema) = file_schema.sheets.get(sheet_name) {
-                    // 判断准则：只要有任何物理列是以“当前路径 + 分隔符”开头的，它就是一个分类
-                    let category_prefix = format!("{}{}", col_path, SHEET_JOIN_STR);
+            // 🌟 此时 file_path 是精准无误的，必然能从 schemas 里取到对象
+            if let Some(file_schema) = schemas.get(&file_path) {
+                if let Some(sheet_schema) = file_schema.sheets.get(&sheet_name) {
+                    let category_prefix = format!("{}@|||@", col_path);
                     is_category = sheet_schema
                         .columns
                         .iter()
@@ -59,39 +69,36 @@ pub fn preprocess_query_with_refs(
             }
 
             if is_category {
-                // 1. 批量锁定 (分类节点)
                 system_hints.push_str(&format!(
-                    "- 🎯 批量锁定分类: 文件 `{}` -> 表 `{}` -> 分类前缀 `{}`\n\
-                     - 执行要求: 你必须找到所有以此前缀开头的列，并对它们执行相同操作。\n",
+                    "- 🎯 批量锁定分类: 文件 `{}` -> 表 `{}` -> 分类前缀 `{}`\n",
                     file_path, sheet_name, col_path
                 ));
-                format!("“{}”分类下的所有数据", col_path)
+                replacement_text = format!("“{}”分类下的所有数据", col_path);
             } else {
-                // 2. 精确锁定 (叶子节点)
                 system_hints.push_str(&format!(
                     "- 🎯 锁定物理列: 文件 `{}` -> 表 `{}` -> 绝对列名 `{}`\n",
                     file_path, sheet_name, col_path
                 ));
-                let short_col = col_path.split(SHEET_JOIN_STR).last().unwrap_or(col_path);
-                format!("`{}`表的`{}`列", sheet_name, short_col)
+                let short_col = col_path.split("@|||@").last().unwrap_or(col_path.as_str());
+                replacement_text = format!("`{}`表的`{}`列", sheet_name, short_col);
             }
         } else if !sheet_name.is_empty() {
-            // 表级锁定
             system_hints.push_str(&format!(
                 "- 🎯 锁定物理表: 文件 `{}` -> 表 `{}`\n",
                 file_path, sheet_name
             ));
-            format!("`{}`工作表", sheet_name)
+            replacement_text = format!("`{}`工作表", sheet_name);
         } else {
-            // 文件级锁定
             system_hints.push_str(&format!("- 🎯 锁定整个文件: `{}`\n", file_path));
-            format!("文件 `{}`", file_path)
+            replacement_text = format!("文件 `{}`", file_path);
         }
-    });
+
+        final_query = final_query.replace(&mention.placeholder, &replacement_text);
+    }
 
     format!(
         "{}\n\n### 用户的最终需求如下：\n{}",
-        system_hints, processed_query
+        system_hints, final_query
     )
 }
 
@@ -161,7 +168,7 @@ pub async fn call_ai(
         return Err(format!("文件系统错误: 无法写入沙盒上下文 ({})", e));
     }
 
-    let refined_query = preprocess_query_with_refs(user_query, schemas);
+    let refined_query = parse_structured_query(user_query, schemas);
 
     debug!("Refined_query: {}\n", &refined_query);
 

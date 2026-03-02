@@ -1,6 +1,7 @@
 use crate::models::{ActionStatus, AppConfig, ChatMessage};
 use crate::services::config::save_config;
 use crate::store::app_state::use_app_state;
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use dioxus::document::eval;
 use dioxus::prelude::*;
 use std::collections::HashSet;
@@ -231,24 +232,18 @@ pub fn InputArea(
             "".to_string()
         };
 
-        let raw_ref_tag = format!("[[REF:{}|{}|{}]]", file, sheet, col);
+        // 🌟 终极护甲：全部 Base64 编码，彻底断绝转义符和换行符带来的灾难！
+        let file_b64 = B64.encode(&file);
+        let sheet_b64 = B64.encode(&sheet);
+        let col_b64 = B64.encode(&col);
+
         let raw_pill_text = format!("{} {}", icon, display_name);
-
-        // 🌟 修复点：增加对回车 \r 和换行 \n 的转义！
-        // 把换行符变成 JS 里的转义字符 "\\n" 或者直接替换为空格 " "
-        let safe_ref_tag = raw_ref_tag
-            .replace('\\', "\\\\")
-            .replace('\'', "\\'")
-            .replace('\n', "") // 引用标签中直接去掉换行
-            .replace('\r', "");
-
+        // UI 显示文本，仅仅为了不撑破输入框，把换行替换成空格，单引号转义
         let safe_pill_text = raw_pill_text
-            .replace('\\', "\\\\")
-            .replace('\'', "\\'")
-            .replace('\n', " ") // UI 显示的胶囊中把换行替换成空格，防止撑破输入框
-            .replace('\r', "");
+            .replace('\n', " ")
+            .replace('\r', "")
+            .replace('\'', "\\'");
 
-        // 🌟 新增：根据层级动态计算胶囊的颜色样式 直接使用定义在 main.css 里的类名
         let theme_class = if lvl == 0 {
             "pill-file"
         } else if lvl == 1 {
@@ -258,11 +253,9 @@ pub fn InputArea(
         } else {
             "pill-column"
         };
-
-        // 基础样式：圆角、边距、禁止选中、默认指针、带点小阴影
         let full_pill_class = format!("pill-base {}", theme_class);
 
-        // 🌟 修复点 3：更健壮的 JS 光标插入逻辑
+        // 🌟 现在注入到 JS 里的全都是安全的大小写字母，绝对不可能报错了
         let js = format!(
             r#"
             let sel = window.getSelection();
@@ -271,10 +264,13 @@ pub fn InputArea(
                 let node = range.startContainer;
                 
                 let span = document.createElement('span');
-                // 注入我们在 main.css 里的 class
                 span.className = '{}';
                 span.contentEditable = 'false'; 
-                span.setAttribute('data-ref', '{}'); 
+                
+                // 存入的是安全的 Base64 字符串
+                span.setAttribute('data-file', '{}'); 
+                span.setAttribute('data-sheet', '{}'); 
+                span.setAttribute('data-col', '{}'); 
                 span.innerText = '{}';
 
                 if (node.nodeType === Node.TEXT_NODE) {{
@@ -282,25 +278,18 @@ pub fn InputArea(
                     let offset = range.startOffset;
                     let atIdx = Math.max(text.substring(0, offset).lastIndexOf('@'), text.substring(0, offset).lastIndexOf('＠'));
                     if (atIdx !== -1) {{
-                        range.setStart(node, atIdx); 
-                        range.deleteContents();
-                        range.insertNode(span);
-                    }} else {{
-                        range.deleteContents(); range.insertNode(span);
-                    }}
-                }} else {{
-                    range.deleteContents(); range.insertNode(span);
-                }}
-
+                        range.setStart(node, atIdx); range.deleteContents();
+                    }} else {{ range.deleteContents(); }}
+                }} else {{ range.deleteContents(); }}
+                
+                range.insertNode(span);
                 let space = document.createTextNode('\u00A0'); 
                 span.parentNode.insertBefore(space, span.nextSibling);
-                range.setStartAfter(space); 
-                range.collapse(true);
-                sel.removeAllRanges(); 
-                sel.addRange(range);
+                range.setStartAfter(space); range.collapse(true);
+                sel.removeAllRanges(); sel.addRange(range);
             }}
             "#,
-            full_pill_class, safe_ref_tag, safe_pill_text
+            full_pill_class, file_b64, sheet_b64, col_b64, safe_pill_text
         );
 
         spawn(async move {
@@ -319,26 +308,49 @@ pub fn InputArea(
         spawn(async move {
             let js_code = r#"
                 let container = document.getElementById("rich-chat-input");
-                let payload = "";
+                
+                // 🌟 架构升级：构建标准的结构化 API 请求体
+                let payload = {
+                    raw_query: "",
+                    mentions: []
+                };
+                
                 if (container) {
+                    let mention_index = 0;
                     for (let node of container.childNodes) {
                         if (node.nodeType === Node.TEXT_NODE) {
-                            payload += node.textContent;
+                            payload.raw_query += node.textContent;
+                        } else if (node.nodeType === Node.ELEMENT_NODE && node.hasAttribute('data-file')) {
+                            // 遇到胶囊，生成一个占位符，比如 {{REF_0}}
+                            let placeholder = `{{REF_${mention_index}}}`;
+                            payload.raw_query += placeholder;
+                            
+                            // 收集真实元数据
+                            payload.mentions.push({
+                                placeholder: placeholder,
+                                file: node.getAttribute('data-file') || "",
+                                sheet: node.getAttribute('data-sheet') || "",
+                                col: node.getAttribute('data-col') || ""
+                            });
+                            mention_index++;
                         } else if (node.nodeType === Node.ELEMENT_NODE) {
-                            payload += node.hasAttribute('data-ref') ? node.getAttribute('data-ref') : node.innerText;
+                            payload.raw_query += node.innerText;
                         }
                     }
                 }
-                // 🌟 重要：必须调用 dioxus.send 才能让 Rust 的 recv 收到数据
-                dioxus.send(payload.trim());
+                
+                // 转化为 JSON 字符串发送给 Rust
+                dioxus.send(JSON.stringify(payload));
             "#;
 
             let mut eval_handle = eval(js_code);
             if let Ok(json_val) = eval_handle.recv::<serde_json::Value>().await {
-                if let Some(payload) = json_val.as_str() {
-                    if !payload.is_empty() {
-                        perform_request(payload.to_string(), false);
-                        // 清空输入框
+                if let Some(json_str) = json_val.as_str() {
+                    if !json_str.trim().is_empty()
+                        && json_str != r#"{"raw_query":"","mentions":[]}"#
+                    {
+                        // 将整个 JSON 字符串发给后端（后端再解析）
+                        perform_request(json_str.to_string(), false);
                         let _ = eval("document.getElementById('rich-chat-input').innerHTML = '';");
                     }
                 }

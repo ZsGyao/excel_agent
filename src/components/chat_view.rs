@@ -1,10 +1,65 @@
 use crate::models::{ActionStatus, ChatMessage};
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use dioxus::{document::eval, prelude::*};
+use serde::Deserialize;
 
 #[derive(PartialEq)]
 enum TextSegment {
     Text(String),
     Code(String),
+}
+
+#[derive(Deserialize)]
+struct ChatPayload {
+    raw_query: String,
+    mentions: Vec<MentionData>,
+}
+
+#[derive(Deserialize)]
+struct MentionData {
+    placeholder: String,
+    file: String,
+    sheet: String,
+    col: String,
+}
+
+/// 专门用于将后端的 JSON Payload 转化为漂亮的 UI 文本
+pub fn format_user_message(raw_msg: &str) -> String {
+    // 尝试解析是否为带有胶囊的 JSON 协议
+    if let Ok(payload) = serde_json::from_str::<ChatPayload>(raw_msg) {
+        let mut display_text = payload.raw_query;
+
+        for mention in payload.mentions {
+            let file = String::from_utf8(B64.decode(&mention.file).unwrap_or_default())
+                .unwrap_or_default();
+            let sheet = String::from_utf8(B64.decode(&mention.sheet).unwrap_or_default())
+                .unwrap_or_default();
+            let col =
+                String::from_utf8(B64.decode(&mention.col).unwrap_or_default()).unwrap_or_default();
+
+            let display_name = if !col.is_empty() {
+                // 取出最后的列名
+                let short_col = col.split("@|||@").last().unwrap_or(&col);
+                format!("`🏷️ {}`", short_col) // 用 markdown 的反引号包裹，渲染出类似胶囊的背景
+            } else if !sheet.is_empty() {
+                format!("`📑 {}`", sheet)
+            } else if !file.is_empty() {
+                // 取出纯文件名
+                let short_file = file.replace("\\", "/");
+                let file_name = short_file.split('/').last().unwrap_or(&file);
+                format!("`📄 {}`", file_name)
+            } else {
+                "".to_string()
+            };
+
+            // 把 {{REF_0}} 替换成漂亮的名字
+            display_text = display_text.replace(&mention.placeholder, &display_name);
+        }
+        return display_text;
+    }
+
+    // 如果是普通文本聊天（不是 JSON），直接原样返回
+    raw_msg.to_string()
 }
 
 // 🔥 新增：解析函数，将混合文本切分为 普通文本 和 代码块
@@ -78,7 +133,7 @@ fn clean_text(text: &str) -> String {
         .to_string()
 }
 
-// 🔥 核心修复：将复杂的文本段落渲染逻辑提取为独立函数
+// 将复杂的文本段落渲染逻辑提取为独立函数
 // 这避免了在 rsx! 或 map 闭包内部写复杂的 let 语句导致的解析错误
 fn render_text_segment_content(text: String, is_undone: bool) -> Element {
     let mut elements = Vec::new();
@@ -161,8 +216,16 @@ pub fn ChatView(
         let is_undone = matches!(msg.status, ActionStatus::Undone);
         let bubble_class = if is_undone { "bubble undone-state" } else { "bubble" };
 
+        // 如果是用户发送的消息，先尝试用 format_user_message 解析 JSON 并美化。
+        // 如果是 AI 回复的消息，则保持原样。
+        let display_text = if msg.is_user {
+            format_user_message(&msg.text)
+        } else {
+            msg.text.clone()
+        };
+
         // 解析文本段落
-        let segments = parse_markdown_segments(&msg.text);
+        let segments = parse_markdown_segments(&display_text);
 
         // 构建内容元素
         let content_elements = segments.into_iter().map(|seg| {
@@ -201,7 +264,7 @@ pub fn ChatView(
                     }
                 }
             },
-            // 🔥 新增：报错状态下显示重试按钮，防止死胡同
+            // 报错状态下显示重试按钮，防止死胡同
             ActionStatus::Error(_) => rsx! {
                 div { style: "margin-top: 10px; border-top: 1px solid #f8d7da; padding-top: 10px;",
                     div { class: "btn-group",
