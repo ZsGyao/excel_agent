@@ -1404,3 +1404,56 @@ pre code.hljs {
 .mention-item.selected span.icon {
     transform: scale(1.2);
 }
+
+/* =========================================
+   自定义胶囊（Pill）层级样式
+   ========================================= */
+
+/* 胶囊的基础样式（圆角、间距、禁止选中等） */
+.pill-base {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.125rem 0.375rem;
+    /* px-1.5 py-0.5 */
+    margin: 0 0.25rem;
+    /* mx-1 */
+    border-radius: 0.375rem;
+    /* rounded-md */
+    font-size: 0.75rem;
+    /* text-xs */
+    font-weight: 500;
+    /* font-medium */
+    user-select: none;
+    cursor: default;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    /* shadow-sm */
+    border: 1px solid transparent;
+}
+
+/* 📄 文件层级 (紫色) */
+.pill-file {
+    background-color: #f3e8ff;
+    color: #6b21a8;
+    border-color: #e9d5ff;
+}
+
+/* 📑 工作表层级 (翠绿色) */
+.pill-sheet {
+    background-color: #d1fae5;
+    color: #065f46;
+    border-color: #a7f3d0;
+}
+
+/* 📁 分类层级 (橙色/琥珀色) */
+.pill-category {
+    background-color: #fef3c7;
+    color: #92400e;
+    border-color: #fde68a;
+}
+
+/* 🏷️ 字段/普通层级 (蓝色) */
+.pill-column {
+    background-color: #dbeafe;
+    color: #1e40af;
+    border-color: #bfdbfe;
+}

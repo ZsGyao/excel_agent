@@ -116,10 +116,11 @@ pub fn InputArea(
                                     } else {
                                         "📁"
                                     };
+                                    let clean_part = part.replace('\n', " ").replace('\r', "");
                                     let display = if is_leaf {
-                                        part.to_string()
+                                        clean_part.clone()
                                     } else {
-                                        format!("{}", part)
+                                        format!("{}", clean_part)
                                     };
 
                                     // 元组结构：(图标, 路径, 显示名, 缩进, 是否叶子)
@@ -190,78 +191,123 @@ pub fn InputArea(
     };
 
     // 🌟 胶囊植入逻辑
-    let mut insert_pill_fn =
-        move |idx: usize, list: Vec<(&'static str, String, String, usize, bool)>| {
-            if idx >= list.len() {
-                return;
+    let mut insert_pill_fn = move |idx: usize,
+                                   list: Vec<(&'static str, String, String, usize, bool)>,
+                                   force_insert: bool| {
+        if idx >= list.len() {
+            return;
+        }
+        let (icon, actual_val, display_name, _, is_leaf) = list[idx].clone();
+
+        // 🌟 修复点 1：如果是文件夹，且没有按 Shift (force_insert=false)，才执行折叠
+        // 如果按了 Shift，就会跳过这个 if，继续往下生成胶囊！
+        if !is_leaf && !force_insert {
+            let mut expanded = expanded_paths.write();
+            if expanded.contains(&actual_val) {
+                expanded.remove(&actual_val);
+            } else {
+                expanded.insert(actual_val);
             }
-            let (icon, actual_val, display_name, _, is_leaf) = list[idx].clone();
+            return;
+        }
 
-            // 如果是文件夹，点击则切换折叠状态
-            if !is_leaf {
-                let mut expanded = expanded_paths.write();
-                if expanded.contains(&actual_val) {
-                    expanded.remove(&actual_val);
-                } else {
-                    expanded.insert(actual_val);
-                }
-                return;
-            }
+        // --- 叶子节点或强行插入分类的逻辑 ---
+        let lvl = *mention_level.read();
+        let file = if lvl == 0 {
+            actual_val.clone()
+        } else {
+            selected_file.read().clone()
+        };
+        let sheet = if lvl == 1 {
+            actual_val.clone()
+        } else if lvl > 1 {
+            selected_sheet.read().clone()
+        } else {
+            "".to_string()
+        };
+        let col = if lvl == 2 {
+            actual_val.clone()
+        } else {
+            "".to_string()
+        };
 
-            // --- 叶子节点插入逻辑 ---
-            let lvl = *mention_level.read();
-            let file = if lvl == 0 {
-                actual_val.clone()
-            } else {
-                selected_file.read().clone()
-            };
-            let sheet = if lvl == 1 {
-                actual_val.clone()
-            } else if lvl > 1 {
-                selected_sheet.read().clone()
-            } else {
-                "".to_string()
-            };
-            let col = if lvl == 2 {
-                actual_val.clone()
-            } else {
-                "".to_string()
-            };
+        let raw_ref_tag = format!("[[REF:{}|{}|{}]]", file, sheet, col);
+        let raw_pill_text = format!("{} {}", icon, display_name);
 
-            let ref_tag = format!("[[REF:{}|{}|{}]]", file, sheet, col);
-            let pill_text = format!("{} {}", icon, display_name);
+        // 🌟 修复点：增加对回车 \r 和换行 \n 的转义！
+        // 把换行符变成 JS 里的转义字符 "\\n" 或者直接替换为空格 " "
+        let safe_ref_tag = raw_ref_tag
+            .replace('\\', "\\\\")
+            .replace('\'', "\\'")
+            .replace('\n', "") // 引用标签中直接去掉换行
+            .replace('\r', "");
 
-            let js = format!(
-                r#"
+        let safe_pill_text = raw_pill_text
+            .replace('\\', "\\\\")
+            .replace('\'', "\\'")
+            .replace('\n', " ") // UI 显示的胶囊中把换行替换成空格，防止撑破输入框
+            .replace('\r', "");
+
+        // 🌟 新增：根据层级动态计算胶囊的颜色样式 直接使用定义在 main.css 里的类名
+        let theme_class = if lvl == 0 {
+            "pill-file"
+        } else if lvl == 1 {
+            "pill-sheet"
+        } else if lvl == 2 && !is_leaf {
+            "pill-category"
+        } else {
+            "pill-column"
+        };
+
+        // 基础样式：圆角、边距、禁止选中、默认指针、带点小阴影
+        let full_pill_class = format!("pill-base {}", theme_class);
+
+        // 🌟 修复点 3：更健壮的 JS 光标插入逻辑
+        let js = format!(
+            r#"
             let sel = window.getSelection();
             if (sel.rangeCount > 0) {{
                 let range = sel.getRangeAt(0);
                 let node = range.startContainer;
+                
+                let span = document.createElement('span');
+                // 注入我们在 main.css 里的 class
+                span.className = '{}';
+                span.contentEditable = 'false'; 
+                span.setAttribute('data-ref', '{}'); 
+                span.innerText = '{}';
+
                 if (node.nodeType === Node.TEXT_NODE) {{
                     let text = node.textContent;
                     let offset = range.startOffset;
                     let atIdx = Math.max(text.substring(0, offset).lastIndexOf('@'), text.substring(0, offset).lastIndexOf('＠'));
                     if (atIdx !== -1) {{
-                        range.setStart(node, atIdx); range.deleteContents();
-                        let span = document.createElement('span');
-                        span.className = 'inline-flex items-center px-2 py-0.5 mx-1 rounded text-xs font-medium bg-blue-100 text-blue-800 select-none cursor-default';
-                        span.contentEditable = 'false'; span.setAttribute('data-ref', '{}'); span.innerText = '{}';
+                        range.setStart(node, atIdx); 
+                        range.deleteContents();
                         range.insertNode(span);
-                        let space = document.createTextNode('\u00A0'); span.parentNode.insertBefore(space, span.nextSibling);
-                        range.setStartAfter(space); range.collapse(true);
-                        sel.removeAllRanges(); sel.addRange(range);
+                    }} else {{
+                        range.deleteContents(); range.insertNode(span);
                     }}
+                }} else {{
+                    range.deleteContents(); range.insertNode(span);
                 }}
+
+                let space = document.createTextNode('\u00A0'); 
+                span.parentNode.insertBefore(space, span.nextSibling);
+                range.setStartAfter(space); 
+                range.collapse(true);
+                sel.removeAllRanges(); 
+                sel.addRange(range);
             }}
             "#,
-                ref_tag, pill_text
-            );
+            full_pill_class, safe_ref_tag, safe_pill_text
+        );
 
-            spawn(async move {
-                let _ = eval(&js);
-            });
-            show_mention_menu.set(false);
-        };
+        spawn(async move {
+            let _ = eval(&js);
+        });
+        show_mention_menu.set(false);
+    };
 
     // 🌟 发送按钮逻辑修复：改用 dioxus.send
     let mut extract_and_send = move || {
@@ -374,11 +420,14 @@ pub fn InputArea(
                     let lvl = *mention_level.read();
                     let idx = *selected_index.read();
                     if idx < current_list_len {
-                        // 🌟 修复：解构 5 个元素
                         let (_, val, _, _, is_leaf) = &current_list_for_kbd[idx];
 
-                        if evt.modifiers().contains(Modifiers::SHIFT) || (lvl == 2 && *is_leaf) {
-                            insert_pill_fn(idx, current_list_for_kbd.clone());
+                        // 🌟 提取 Shift 按键状态
+                        let is_shift = evt.modifiers().contains(Modifiers::SHIFT);
+
+                        // 🌟 修复点 4：把 is_shift 传给 insert_pill_fn
+                        if is_shift || (lvl == 2 && *is_leaf) {
+                            insert_pill_fn(idx, current_list_for_kbd.clone(), is_shift);
                         } else if lvl < 2 {
                             if lvl == 0 {
                                 selected_file.set(val.clone());
@@ -442,6 +491,9 @@ pub fn InputArea(
 
     rsx! {
         div { class: "input-container",
+
+            div { class: "hidden bg-purple-100 text-purple-800 border-purple-200 bg-emerald-100 text-emerald-800 border-emerald-200 bg-amber-100 text-amber-800 border-amber-200 bg-blue-100 text-blue-800 border-blue-200 shadow-sm rounded-md border" }
+
             div { class: "input-toolbar",
                 div { class: "model-selector", onclick: switch_model, "{active_model_name} ▾" }
                 button {
@@ -472,7 +524,10 @@ pub fn InputArea(
                                             // 🌟 动态计算缩进并应用样式
                                             style: "padding-left: {indent + 12}px; display: flex; align-items: center; width: 100%; text-align: left;",
                                             onmousedown: move |e| e.prevent_default(),
-                                            onclick: move |_| insert_pill_fn(idx, list_for_click.clone()),
+                                            onclick: move |e| {
+                                                let is_shift = e.modifiers().contains(Modifiers::SHIFT);
+                                                insert_pill_fn(idx, list_for_click.clone(), is_shift)
+                                            },
                                             onmouseenter: move |_| selected_index.set(idx),
 
                                             // 🌟 文件夹节点增加展开/收起小箭头
