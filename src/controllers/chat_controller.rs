@@ -140,6 +140,8 @@ pub fn on_confirm(mut state: AppState, msg_id: usize) {
             }
         }
     });
+
+    state.is_loading.set(false);
 }
 
 pub fn on_cancel(mut state: AppState, id: usize) {

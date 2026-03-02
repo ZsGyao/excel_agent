@@ -3,15 +3,90 @@ use crate::{
     services::excel_engine::FileSchema,
 };
 use anyhow::Result;
+use regex::Regex;
 use reqwest::{self, Client};
 use serde_json::{self, json, Value};
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf, sync::OnceLock};
 use tracing::{debug, info}; // 确保 main.rs 中有 mod services;
 
 const ORCHESTRATOR_PROMPT: &str = include_str!("../../assets/prompts/orchestrator.md");
 const CODER_PROMPT: &str = include_str!("../../assets/prompts/coder.md");
 const UNIVERSAL_SANDBOX_TEMPLATE: &str =
     include_str!("../../assets/templates/universal_sandbox.py");
+
+/// 全局静态正则引擎，使用 OnceLock 确保只编译一次，提升高并发下的执行性能。
+static REF_REGEX: OnceLock<Regex> = OnceLock::new();
+
+/// 🚀 后端指令解包拦截器 (Instruction Unpacking Interceptor)
+///
+/// 该中间件负责拦截用户原始输入中包含的实体引用标记（[[REF:...]]），
+/// 并将其转化为 AI 模型必须严格遵守的物理路径指令。
+///
+/// # 转换逻辑
+/// 1. 识别 `[[REF:文件|表名|列名]]` 格式。
+/// 2. 在 Prompt 顶部注入“确定性执行提示”。
+/// 3. 将原始语句中的标记替换为更符合自然语言的描述，便于模型理解语境。
+///
+/// # 参数
+/// * `raw_query` - 来自前端的包含富文本标记的原始字符串。
+///
+/// # 返回
+/// 预处理后的字符串，包含了系统强约束前缀和清理后的用户需求。
+pub fn preprocess_query_with_refs(raw_query: &str) -> String {
+    // 1. 获取或初始化正则表达式
+    // 匹配格式: [[REF:文件路径|工作表名|物理列名]]
+    let re = REF_REGEX.get_or_init(|| {
+        Regex::new(r"\[\[REF:(.*?)\|(.*?)\|(.*?)\]\]").expect("REF_REGEX 编译失败，请检查正则语法")
+    });
+
+    // 如果没有任何匹配，直接返回原句，不做额外处理
+    if !re.is_match(raw_query) {
+        return raw_query.to_string();
+    }
+
+    // 2. 准备系统强约束提示词块
+    let mut system_hints = String::from(
+        "【⚠️ 确定性操作指令 - 优先级最高 ⚠️】\n\
+        用户已在 GUI 界面明确锁定了以下物理操作目标。你必须直接使用这些绝对路径，\n\
+        禁止调用任何模糊匹配函数（如 get_col_name），禁止尝试猜测列名：\n",
+    );
+
+    // 3. 执行替换并提取元数据
+    let processed_query = re.replace_all(raw_query, |caps: &regex::Captures| {
+        let file_path = &caps[1];
+        let sheet_name = &caps[2];
+        let col_full_name = &caps[3];
+
+        // 判定引用层级并构建指令详情
+        if !col_full_name.is_empty() {
+            // 列级锁定
+            system_hints.push_str(&format!(
+                "- 🎯 锁定物理列: 文件 `{}` -> 表 `{}` -> 绝对列名 `{}`\n",
+                file_path, sheet_name, col_full_name
+            ));
+            // 提取短列名（去除非业务前缀）用于增强自然语言理解
+            let short_col = col_full_name.split("@|||@").last().unwrap_or(col_full_name);
+            format!("`{}`表的`{}`列", sheet_name, short_col)
+        } else if !sheet_name.is_empty() {
+            // 表级锁定
+            system_hints.push_str(&format!(
+                "- 🎯 锁定物理表: 文件 `{}` -> 表 `{}`\n",
+                file_path, sheet_name
+            ));
+            format!("`{}`工作表", sheet_name)
+        } else {
+            // 文件级锁定
+            system_hints.push_str(&format!("- 🎯 锁定整个文件: `{}`\n", file_path));
+            format!("文件 `{}`", file_path)
+        }
+    });
+
+    // 4. 拼装最终发送给 AI 的 Payload
+    format!(
+        "{}\n\n### 用户的最终需求如下：\n{}",
+        system_hints, processed_query
+    )
+}
 
 async fn llm_request(config: &AppConfig, system_prompt: &str, user_prompt: &str) -> Result<String> {
     let profile = config.active_profile();
@@ -78,8 +153,12 @@ pub async fn call_ai(
         return Err(format!("文件系统错误: 无法写入沙盒上下文 ({})", e));
     }
 
+    let refined_query = preprocess_query_with_refs(user_query);
+
+    debug!("Refined_query: {}\n", &refined_query);
+
     info!("🧭 [阶段 2: 任务编排] 呼叫 Orchestrator 拆解复杂意图...");
-    let orchestrator_res = llm_request(config, ORCHESTRATOR_PROMPT, user_query)
+    let orchestrator_res = llm_request(config, ORCHESTRATOR_PROMPT, refined_query.as_str())
         .await
         .unwrap_or_else(|_| {
             r#"{"tasks": [{"step":1, "intent":"TYPE_UPDATE", "description":"处理默认需求"}]}"#
@@ -94,7 +173,7 @@ pub async fn call_ai(
                 tasks: vec![crate::models::Task {
                     step: 1,
                     intent: IntentType::Update,
-                    description: user_query.to_string(),
+                    description: refined_query.clone(),
                 }],
             }
         });
@@ -122,7 +201,7 @@ pub async fn call_ai(
         .replace("{{SANDBOX_CONSTRAINTS}}", &unified_constraints)
         .replace("{{SCHEMA_JSON}}", schema_json);
 
-    match llm_request(config, &coder_system_prompt, user_query).await {
+    match llm_request(config, &coder_system_prompt, refined_query.as_str()).await {
         Ok(raw_code) => {
             let ai_business_code = clean_markdown_code(&raw_code);
             // 模板渲染：将 AI 生成的业务代码注入安全的 Python 沙盒底座

@@ -1,7 +1,9 @@
 use crate::models::{ActionStatus, AppConfig, ChatMessage};
 use crate::services::config::save_config;
+use crate::store::app_state::use_app_state;
 use dioxus::document::eval;
 use dioxus::prelude::*;
+use std::path::Path;
 
 #[component]
 pub fn InputArea(
@@ -13,6 +15,7 @@ pub fn InputArea(
     on_run_code: EventHandler<usize>,
     on_open_file: EventHandler<()>,
 ) -> Element {
+    let mut state = use_app_state();
     let mut input_ref = use_signal(|| None::<std::rc::Rc<MountedData>>);
 
     let mut show_mention_menu = use_signal(|| false);
@@ -21,91 +24,90 @@ pub fn InputArea(
     let mut selected_file = use_signal(|| String::new());
     let mut selected_sheet = use_signal(|| String::new());
 
-    // 🌟 模拟数据保持不变
-    let mock_schema = vec![
-        (
-            "2026年度考核.xlsx",
-            vec![
-                (
-                    "员工考核表",
-                    vec![
-                        "基本信息@|||@姓名",
-                        "基本信息@|||@部门",
-                        "2026年度大考@|||@理论成绩",
-                        "2026年度大考@|||@实操成绩",
-                    ],
-                ),
-                ("部门映射表", vec!["部门", "负责人", "所在楼层"]),
-            ],
-        ),
-        (
-            "系统配置表.xlsx",
-            vec![("Sheet1", vec!["配置项", "数值", "状态"])],
-        ),
-    ];
+    // 🌟 数据计算逻辑：从真实的 global_schemas 获取数据
+    let current_list = {
+        let schemas = state.global_schemas.read();
+        let active_paths = state.active_files.read();
 
-    // 💡 动态计算列表 (这里使用引用，不移动所有权)
-    let current_list = match *mention_level.read() {
-        0 => mock_schema
-            .iter()
-            .map(|(f, _)| ("📄", f.to_string(), f.to_string()))
-            .collect::<Vec<_>>(),
-        1 => {
-            let file = selected_file.read();
-            mock_schema
+        match *mention_level.read() {
+            0 => active_paths
                 .iter()
-                .find(|(f, _)| f == &*file)
-                .map(|(_, sheets)| {
-                    sheets
-                        .iter()
-                        .map(|(s, _)| ("📑", s.to_string(), s.to_string()))
-                        .collect()
+                .map(|path| {
+                    let file_name = Path::new(path)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path.clone());
+                    ("📄", path.clone(), file_name)
                 })
-                .unwrap_or_default()
+                .collect::<Vec<_>>(),
+
+            1 => {
+                let file_path = selected_file.read();
+                schemas
+                    .get(&*file_path)
+                    .map(|file_schema| {
+                        file_schema
+                            .sheets
+                            .keys()
+                            .map(|sheet_name| ("📑", sheet_name.clone(), sheet_name.clone()))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }
+
+            2 => {
+                let file_path = selected_file.read();
+                let sheet_name = selected_sheet.read();
+                schemas
+                    .get(&*file_path)
+                    .and_then(|file_schema| file_schema.sheets.get(&*sheet_name))
+                    .map(|sheet_schema| {
+                        sheet_schema
+                            .columns
+                            .iter()
+                            .map(|col| {
+                                let full_name = col.semantic_name.clone();
+                                let short_name = full_name
+                                    .split("@|||@")
+                                    .last()
+                                    .unwrap_or(&full_name)
+                                    .to_string();
+                                ("🏷️", full_name, short_name)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            }
+            _ => vec![],
         }
-        2 => {
-            let file = selected_file.read();
-            let sheet = selected_sheet.read();
-            mock_schema
-                .iter()
-                .find(|(f, _)| f == &*file)
-                .and_then(|(_, sheets)| sheets.iter().find(|(s, _)| s == &*sheet))
-                .map(|(_, cols)| {
-                    cols.iter()
-                        .map(|c| {
-                            let short_name = c.split("@|||@").last().unwrap_or(c).to_string();
-                            ("🏷️", c.to_string(), short_name)
-                        })
-                        .collect()
-                })
-                .unwrap_or_default()
-        }
-        _ => vec![],
     };
 
     let current_list_len = current_list.len();
 
-    // 🌟 业务逻辑封装
+    // 🌟 消息请求封装
     let mut perform_request = move |prompt_text: String, is_auto_fix: bool| {
-        if is_loading() {
-            return;
-        }
+        // 不要在这里直接 is_loading.set(false)，因为 AI 还没开始跑
         is_loading.set(true);
+
         let user_id = messages.read().len();
         let display = if is_auto_fix {
             format!("自动修复: {}", prompt_text)
         } else {
             prompt_text
         };
+
         messages
             .write()
             .push(ChatMessage::new(user_id, &display, true));
+
         let ai_id = messages.read().len();
         let mut ai_msg = ChatMessage::loading(ai_id);
         ai_msg.status = ActionStatus::Running;
         messages.write().push(ai_msg);
+
+        // 这里的 call 会触发 chat_controller 里的逻辑
         on_run_code.call(ai_id);
-        is_loading.set(false);
+        // 注意：is_loading 的关闭应该由具体执行代码的协程负责，这里先保持 true
     };
 
     use_effect(move || {
@@ -118,14 +120,14 @@ pub fn InputArea(
         }
     });
 
-    // 🌟 核心：插入胶囊逻辑封装在一个统一的函数中
-    // 接受 list 作为参数，避免闭包捕获所有权问题
+    // 🌟 胶囊植入逻辑
     let mut insert_pill_fn = move |idx: usize, list: Vec<(&'static str, String, String)>| {
         if idx >= list.len() {
             return;
         }
         let (icon, actual_val, display_name) = list[idx].clone();
         let lvl = *mention_level.read();
+
         let file = if lvl == 0 {
             actual_val.clone()
         } else {
@@ -155,30 +157,72 @@ pub fn InputArea(
                 let node = range.startContainer;
                 if (node.nodeType === Node.TEXT_NODE) {{
                     let text = node.textContent;
-                    let cursorOffset = range.startOffset;
-                    let atIndex = Math.max(text.substring(0, cursorOffset).lastIndexOf('@'), text.substring(0, cursorOffset).lastIndexOf('＠'));
-                    if (atIndex !== -1) {{
-                        range.setStart(node, atIndex); range.deleteContents();
+                    let offset = range.startOffset;
+                    let atIdx = Math.max(text.substring(0, offset).lastIndexOf('@'), text.substring(0, offset).lastIndexOf('＠'));
+                    if (atIdx !== -1) {{
+                        range.setStart(node, atIdx);
+                        range.deleteContents();
                         let span = document.createElement('span');
                         span.className = 'inline-flex items-center px-2 py-0.5 mx-1 rounded text-xs font-medium bg-blue-100 text-blue-800 select-none cursor-default';
-                        span.contentEditable = 'false'; span.setAttribute('data-ref', '{}'); span.innerText = '{}';
+                        span.contentEditable = 'false';
+                        span.setAttribute('data-ref', '{}');
+                        span.innerText = '{}';
                         range.insertNode(span);
-                        let space = document.createTextNode('\u00A0'); span.parentNode.insertBefore(space, span.nextSibling);
+                        let space = document.createTextNode('\u00A0');
+                        span.parentNode.insertBefore(space, span.nextSibling);
                         range.setStartAfter(space); range.collapse(true);
                         sel.removeAllRanges(); sel.addRange(range);
                     }}
                 }}
             }}
-        "#,
+            "#,
             ref_tag, pill_text
         );
 
         spawn(async move {
-            let _ = eval(&js).recv::<serde_json::Value>().await;
+            let _ = eval(&js); // 插入操作不需要 recv 等待
         });
         show_mention_menu.set(false);
     };
 
+    // 🌟 发送按钮逻辑修复：改用 dioxus.send
+    let mut extract_and_send = move || {
+        if is_loading() {
+            return;
+        }
+        show_mention_menu.set(false); // 发送时自动关闭菜单
+
+        spawn(async move {
+            let js_code = r#"
+                let container = document.getElementById("rich-chat-input");
+                let payload = "";
+                if (container) {
+                    for (let node of container.childNodes) {
+                        if (node.nodeType === Node.TEXT_NODE) {
+                            payload += node.textContent;
+                        } else if (node.nodeType === Node.ELEMENT_NODE) {
+                            payload += node.hasAttribute('data-ref') ? node.getAttribute('data-ref') : node.innerText;
+                        }
+                    }
+                }
+                // 🌟 重要：必须调用 dioxus.send 才能让 Rust 的 recv 收到数据
+                dioxus.send(payload.trim());
+            "#;
+
+            let mut eval_handle = eval(js_code);
+            if let Ok(json_val) = eval_handle.recv::<serde_json::Value>().await {
+                if let Some(payload) = json_val.as_str() {
+                    if !payload.is_empty() {
+                        perform_request(payload.to_string(), false);
+                        // 清空输入框
+                        let _ = eval("document.getElementById('rich-chat-input').innerHTML = '';");
+                    }
+                }
+            }
+        });
+    };
+
+    // 原有模型切换逻辑
     let mut switch_model = move |_| {
         let mut cfg = config.read().clone();
         if cfg.profiles.is_empty() {
@@ -200,35 +244,7 @@ pub fn InputArea(
 
     let active_model_name = config.read().active_profile().name.clone();
 
-    // 发送提取逻辑
-    let mut extract_and_send = move || {
-        if is_loading() {
-            return;
-        }
-        spawn(async move {
-            let js_code = r#"
-                let container = document.getElementById("rich-chat-input");
-                let payload = "";
-                for (let node of container.childNodes) {
-                    if (node.nodeType === Node.TEXT_NODE) payload += node.textContent;
-                    else if (node.nodeType === Node.ELEMENT_NODE) payload += node.hasAttribute('data-ref') ? node.getAttribute('data-ref') : node.innerText;
-                }
-                return payload.trim();
-            "#;
-            if let Ok(json_val) = eval(js_code).recv::<serde_json::Value>().await {
-                if let Some(payload) = json_val.as_str() {
-                    if !payload.is_empty() {
-                        perform_request(payload.to_string(), false);
-                        let _ = eval("document.getElementById('rich-chat-input').innerHTML = '';")
-                            .recv::<serde_json::Value>()
-                            .await;
-                    }
-                }
-            }
-        });
-    };
-
-    // 🌟 键盘劫持处理
+    // 🌟 键盘劫持处理 (保持原样，修复了 set 调用)
     let current_list_for_kbd = current_list.clone();
     let mut handle_keydown = move |evt: Event<KeyboardData>| {
         if *show_mention_menu.read() {
@@ -310,7 +326,7 @@ pub fn InputArea(
         if *show_mention_menu.read() {
             let mut menu_state = show_mention_menu.clone();
             spawn(async move {
-                let js = "return document.getElementById('rich-chat-input').textContent || '';";
+                let js = "let txt = document.getElementById('rich-chat-input').textContent || ''; dioxus.send(txt);";
                 if let Ok(val) = eval(js).recv::<serde_json::Value>().await {
                     if let Some(text) = val.as_str() {
                         if !text.contains('@') && !text.contains('＠') {
@@ -344,7 +360,6 @@ pub fn InputArea(
                     div { class: "mention-popover",
                         div { class: "mention-popover-header", "{header_title}" }
                         div { class: "mention-popover-body",
-                            // 这里克隆 current_list 用于循环渲染
                             for (idx , item) in current_list.clone().into_iter().enumerate() {
                                 {
                                     let (icon, _, display) = item;
@@ -352,11 +367,10 @@ pub fn InputArea(
                                     let list_for_click = current_list.clone();
                                     rsx! {
                                         button {
+                                            key: "{idx}",
                                             class: if is_selected { "mention-item selected" } else { "mention-item" },
                                             onmousedown: move |e| e.prevent_default(),
-                                            onclick: move |_| {
-                                                insert_pill_fn(idx, list_for_click.clone());
-                                            },
+                                            onclick: move |_| insert_pill_fn(idx, list_for_click.clone()),
                                             onmouseenter: move |_| selected_index.set(idx),
                                             span { class: "icon", "{icon}" }
                                             span { class: "text", "{display}" }
