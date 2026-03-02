@@ -28,7 +28,7 @@ pub struct FileSchema {
 
 // ----------------------- 2. 核心解析逻辑 -------------------------------
 
-const SHEET_JOIN_STR: &str = "@|||@";
+pub const SHEET_JOIN_STR: &str = "@|||@";
 
 pub struct ExcelEngine;
 

@@ -58,6 +58,7 @@ pub fn on_confirm(mut state: AppState, msg_id: usize) {
 
             // 2. 拿出全局最新的脱水 JSON
             let schema_json_str = state.ai_context_json.read().clone();
+            let schemas_ref = state.global_schemas.read();
 
             // 3. 带着环境状态，去向 AI 索要代码
             match ai::call_ai(
@@ -65,6 +66,7 @@ pub fn on_confirm(mut state: AppState, msg_id: usize) {
                 &user_query,
                 &schema_json_str,
                 is_any_file_opened,
+                &*schemas_ref,
             )
             .await
             {

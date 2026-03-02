@@ -3,6 +3,7 @@ use crate::services::config::save_config;
 use crate::store::app_state::use_app_state;
 use dioxus::document::eval;
 use dioxus::prelude::*;
+use std::collections::HashSet;
 use std::path::Path;
 
 #[component]
@@ -23,58 +24,116 @@ pub fn InputArea(
     let mut mention_level = use_signal(|| 0usize);
     let mut selected_file = use_signal(|| String::new());
     let mut selected_sheet = use_signal(|| String::new());
+    let mut expanded_paths = use_signal(|| std::collections::HashSet::<String>::new());
+
+    // 🌟 核心：监听选中索引变化，自动处理滚动条
+    use_effect(move || {
+        let _idx = selected_index.read(); // 订阅索引变化
+        let _menu = show_mention_menu.read(); // 订阅菜单开启状态
+
+        if *_menu {
+            spawn(async move {
+                // 给浏览器一点渲染时间，然后执行滚动
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                let js = r#"
+                const selected = document.querySelector('.mention-item.selected');
+                if (selected) {
+                    selected.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'nearest' // 🌟 关键：只有不可见时才滚动，保持体验平滑
+                    });
+                }
+            "#;
+                let _ = eval(js);
+            });
+        }
+    });
 
     // 🌟 数据计算逻辑：从真实的 global_schemas 获取数据
     let current_list = {
         let schemas = state.global_schemas.read();
         let active_paths = state.active_files.read();
+        let expanded = expanded_paths.read();
 
         match *mention_level.read() {
             0 => active_paths
                 .iter()
-                .map(|path| {
-                    let file_name = Path::new(path)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| path.clone());
-                    ("📄", path.clone(), file_name)
+                .map(|p| {
+                    (
+                        "📄",
+                        p.clone(),
+                        Path::new(p).file_name().unwrap().to_string_lossy().into(),
+                        0,
+                        true,
+                    )
                 })
-                .collect::<Vec<_>>(),
-
+                .collect(),
             1 => {
-                let file_path = selected_file.read();
+                let file = selected_file.read();
                 schemas
-                    .get(&*file_path)
-                    .map(|file_schema| {
-                        file_schema
-                            .sheets
+                    .get(&*file)
+                    .map(|fs| {
+                        fs.sheets
                             .keys()
-                            .map(|sheet_name| ("📑", sheet_name.clone(), sheet_name.clone()))
+                            .map(|s| ("📑", s.clone(), s.clone(), 0, true))
                             .collect()
                     })
                     .unwrap_or_default()
             }
-
             2 => {
-                let file_path = selected_file.read();
-                let sheet_name = selected_sheet.read();
+                let file = selected_file.read();
+                let sheet = selected_sheet.read();
                 schemas
-                    .get(&*file_path)
-                    .and_then(|file_schema| file_schema.sheets.get(&*sheet_name))
-                    .map(|sheet_schema| {
-                        sheet_schema
-                            .columns
-                            .iter()
-                            .map(|col| {
-                                let full_name = col.semantic_name.clone();
-                                let short_name = full_name
-                                    .split("@|||@")
-                                    .last()
-                                    .unwrap_or(&full_name)
-                                    .to_string();
-                                ("🏷️", full_name, short_name)
-                            })
-                            .collect::<Vec<_>>()
+                    .get(&*file)
+                    .and_then(|fs| fs.sheets.get(&*sheet))
+                    .map(|ss| {
+                        let mut items = Vec::new();
+                        let mut seen_nodes = HashSet::new();
+
+                        for col in &ss.columns {
+                            let full_path = &col.semantic_name;
+                            let parts: Vec<&str> = full_path.split("@|||@").collect();
+                            let mut current_path = String::new();
+
+                            for (i, part) in parts.iter().enumerate() {
+                                let parent_path = current_path.clone();
+                                if !current_path.is_empty() {
+                                    current_path.push_str("@|||@");
+                                }
+                                current_path.push_str(part);
+
+                                // 🌟 过滤逻辑：第一层必显，非第一层需父级已展开
+                                let should_show = i == 0 || expanded.contains(&parent_path);
+
+                                if should_show && seen_nodes.insert(current_path.clone()) {
+                                    let is_leaf = i == parts.len() - 1;
+                                    let indent = i * 16;
+                                    let is_open = expanded.contains(&current_path);
+                                    let icon = if is_leaf {
+                                        "🏷️"
+                                    } else if is_open {
+                                        "📂"
+                                    } else {
+                                        "📁"
+                                    };
+                                    let display = if is_leaf {
+                                        part.to_string()
+                                    } else {
+                                        format!("{}", part)
+                                    };
+
+                                    // 元组结构：(图标, 路径, 显示名, 缩进, 是否叶子)
+                                    items.push((
+                                        icon,
+                                        current_path.clone(),
+                                        display,
+                                        indent,
+                                        is_leaf,
+                                    ));
+                                }
+                            }
+                        }
+                        items
                     })
                     .unwrap_or_default()
             }
@@ -120,37 +179,60 @@ pub fn InputArea(
         }
     });
 
-    // 🌟 胶囊植入逻辑
-    let mut insert_pill_fn = move |idx: usize, list: Vec<(&'static str, String, String)>| {
-        if idx >= list.len() {
-            return;
+    // 定义一个切换折叠的函数
+    let mut toggle_folder = move |path: String| {
+        let mut expanded = expanded_paths.write();
+        if expanded.contains(&path) {
+            expanded.remove(&path);
+        } else {
+            expanded.insert(path);
         }
-        let (icon, actual_val, display_name) = list[idx].clone();
-        let lvl = *mention_level.read();
+    };
 
-        let file = if lvl == 0 {
-            actual_val.clone()
-        } else {
-            selected_file.read().clone()
-        };
-        let sheet = if lvl == 1 {
-            actual_val.clone()
-        } else if lvl > 1 {
-            selected_sheet.read().clone()
-        } else {
-            "".to_string()
-        };
-        let col = if lvl == 2 {
-            actual_val.clone()
-        } else {
-            "".to_string()
-        };
+    // 🌟 胶囊植入逻辑
+    let mut insert_pill_fn =
+        move |idx: usize, list: Vec<(&'static str, String, String, usize, bool)>| {
+            if idx >= list.len() {
+                return;
+            }
+            let (icon, actual_val, display_name, _, is_leaf) = list[idx].clone();
 
-        let ref_tag = format!("[[REF:{}|{}|{}]]", file, sheet, col);
-        let pill_text = format!("{} {}", icon, display_name);
+            // 如果是文件夹，点击则切换折叠状态
+            if !is_leaf {
+                let mut expanded = expanded_paths.write();
+                if expanded.contains(&actual_val) {
+                    expanded.remove(&actual_val);
+                } else {
+                    expanded.insert(actual_val);
+                }
+                return;
+            }
 
-        let js = format!(
-            r#"
+            // --- 叶子节点插入逻辑 ---
+            let lvl = *mention_level.read();
+            let file = if lvl == 0 {
+                actual_val.clone()
+            } else {
+                selected_file.read().clone()
+            };
+            let sheet = if lvl == 1 {
+                actual_val.clone()
+            } else if lvl > 1 {
+                selected_sheet.read().clone()
+            } else {
+                "".to_string()
+            };
+            let col = if lvl == 2 {
+                actual_val.clone()
+            } else {
+                "".to_string()
+            };
+
+            let ref_tag = format!("[[REF:{}|{}|{}]]", file, sheet, col);
+            let pill_text = format!("{} {}", icon, display_name);
+
+            let js = format!(
+                r#"
             let sel = window.getSelection();
             if (sel.rangeCount > 0) {{
                 let range = sel.getRangeAt(0);
@@ -160,30 +242,26 @@ pub fn InputArea(
                     let offset = range.startOffset;
                     let atIdx = Math.max(text.substring(0, offset).lastIndexOf('@'), text.substring(0, offset).lastIndexOf('＠'));
                     if (atIdx !== -1) {{
-                        range.setStart(node, atIdx);
-                        range.deleteContents();
+                        range.setStart(node, atIdx); range.deleteContents();
                         let span = document.createElement('span');
                         span.className = 'inline-flex items-center px-2 py-0.5 mx-1 rounded text-xs font-medium bg-blue-100 text-blue-800 select-none cursor-default';
-                        span.contentEditable = 'false';
-                        span.setAttribute('data-ref', '{}');
-                        span.innerText = '{}';
+                        span.contentEditable = 'false'; span.setAttribute('data-ref', '{}'); span.innerText = '{}';
                         range.insertNode(span);
-                        let space = document.createTextNode('\u00A0');
-                        span.parentNode.insertBefore(space, span.nextSibling);
+                        let space = document.createTextNode('\u00A0'); span.parentNode.insertBefore(space, span.nextSibling);
                         range.setStartAfter(space); range.collapse(true);
                         sel.removeAllRanges(); sel.addRange(range);
                     }}
                 }}
             }}
             "#,
-            ref_tag, pill_text
-        );
+                ref_tag, pill_text
+            );
 
-        spawn(async move {
-            let _ = eval(&js); // 插入操作不需要 recv 等待
-        });
-        show_mention_menu.set(false);
-    };
+            spawn(async move {
+                let _ = eval(&js);
+            });
+            show_mention_menu.set(false);
+        };
 
     // 🌟 发送按钮逻辑修复：改用 dioxus.send
     let mut extract_and_send = move || {
@@ -273,34 +351,52 @@ pub fn InputArea(
                     evt.prevent_default();
                     let lvl = *mention_level.read();
                     let idx = *selected_index.read();
-                    if lvl < 2 && idx < current_list_len {
-                        let (_, val, _) = &current_list_for_kbd[idx];
-                        if lvl == 0 {
-                            selected_file.set(val.clone());
+                    if idx < current_list_len {
+                        // 🌟 修复：解构 5 个元素
+                        let (_, val, _, _, is_leaf) = &current_list_for_kbd[idx];
+                        if lvl < 2 {
+                            if lvl == 0 {
+                                selected_file.set(val.clone());
+                            }
+                            if lvl == 1 {
+                                selected_sheet.set(val.clone());
+                            }
+                            mention_level.set(lvl + 1);
+                            selected_index.set(0);
+                        } else if !is_leaf {
+                            // 层级 2 文件夹，向右键展开
+                            expanded_paths.write().insert(val.clone());
                         }
-                        if lvl == 1 {
-                            selected_sheet.set(val.clone());
-                        }
-                        mention_level.set(lvl + 1);
-                        selected_index.set(0);
                     }
                 }
                 Key::Enter => {
                     evt.prevent_default();
                     let lvl = *mention_level.read();
                     let idx = *selected_index.read();
-                    if evt.modifiers().contains(Modifiers::SHIFT) || lvl == 2 {
-                        insert_pill_fn(idx, current_list_for_kbd.clone());
-                    } else if idx < current_list_len {
-                        let (_, val, _) = &current_list_for_kbd[idx];
-                        if lvl == 0 {
-                            selected_file.set(val.clone());
+                    if idx < current_list_len {
+                        // 🌟 修复：解构 5 个元素
+                        let (_, val, _, _, is_leaf) = &current_list_for_kbd[idx];
+
+                        if evt.modifiers().contains(Modifiers::SHIFT) || (lvl == 2 && *is_leaf) {
+                            insert_pill_fn(idx, current_list_for_kbd.clone());
+                        } else if lvl < 2 {
+                            if lvl == 0 {
+                                selected_file.set(val.clone());
+                            }
+                            if lvl == 1 {
+                                selected_sheet.set(val.clone());
+                            }
+                            mention_level.set(lvl + 1);
+                            selected_index.set(0);
+                        } else if !is_leaf {
+                            // 层级 2 文件夹，回车切换折叠
+                            let mut expanded = expanded_paths.write();
+                            if expanded.contains(val) {
+                                expanded.remove(val);
+                            } else {
+                                expanded.insert(val.clone());
+                            }
                         }
-                        if lvl == 1 {
-                            selected_sheet.set(val.clone());
-                        }
-                        mention_level.set(lvl + 1);
-                        selected_index.set(0);
                     }
                 }
                 Key::Escape => {
@@ -359,21 +455,45 @@ pub fn InputArea(
                 if *show_mention_menu.read() {
                     div { class: "mention-popover",
                         div { class: "mention-popover-header", "{header_title}" }
-                        div { class: "mention-popover-body",
+                        div {
+                            class: "mention-popover-body",
+                            style: "max-height: 300px; overflow-y: auto;",
                             for (idx , item) in current_list.clone().into_iter().enumerate() {
                                 {
-                                    let (icon, _, display) = item;
+                                    let (icon, path, display, indent, is_leaf) = item;
                                     let is_selected = *selected_index.read() == idx;
+                                    let is_open = expanded_paths.read().contains(&path);
                                     let list_for_click = current_list.clone();
+
                                     rsx! {
                                         button {
-                                            key: "{idx}",
+                                            key: "{path}",
                                             class: if is_selected { "mention-item selected" } else { "mention-item" },
+                                            // 🌟 动态计算缩进并应用样式
+                                            style: "padding-left: {indent + 12}px; display: flex; align-items: center; width: 100%; text-align: left;",
                                             onmousedown: move |e| e.prevent_default(),
                                             onclick: move |_| insert_pill_fn(idx, list_for_click.clone()),
                                             onmouseenter: move |_| selected_index.set(idx),
-                                            span { class: "icon", "{icon}" }
-                                            span { class: "text", "{display}" }
+
+                                            // 🌟 文件夹节点增加展开/收起小箭头
+                                            if !is_leaf {
+                                                span {
+                                                    class: "mr-1 text-[10px] transition-transform duration-200",
+                                                    style: if is_open { "transform: rotate(90deg);" } else { "" },
+                                                    "▶"
+
+                                                }
+                                            } else {
+                                                // 叶子节点占位，保持对齐
+                                                span { class: "w-3" }
+                                            }
+
+                                            span { class: "icon mr-1.5", "{icon}" }
+                                            span {
+                                                class: "text truncate",
+                                                style: if !is_leaf { "font-weight: 600; color: #444;" } else { "" },
+                                                "{display}"
+                                            }
                                         }
                                     }
                                 }

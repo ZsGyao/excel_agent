@@ -31,6 +31,17 @@
    - ✅ 正确写法：`df.groupby('部门列长名')['成绩列长名'].mean()`
 3. **链式操作规范**：请始终保持 `df.groupby('A')['B'].mean()` 的简洁语法，确保 'B' 是原始字符串键。
 
+### 【🚀 批量列处理准则】
+1. **前缀匹配**：如果【确定性指令】锁定的目标是一个分类前缀（如“应知应会”），你必须使用 Python 列表推导式或过滤功能找到所有匹配的列。
+   - ✅ 正确写法：
+     ```python
+     # 找到所有属于“应知应会”大类下的列
+     target_cols = [c for c in df.columns if c.startswith('应知应会@|||@') or c == '应知应会']
+     for col in target_cols:
+         df.loc[df[col] != '2026学习', col] = None # 执行清空
+     ```
+2. **多列更新**：更新多列后，记得循环调用 `safe_update_column` 将每一列写回 Excel。
+
 ### 【全局表格字典】(供你参考表名和列名，不要把这个 JSON 写入代码)
 ```json
 {{SCHEMA_JSON}}
