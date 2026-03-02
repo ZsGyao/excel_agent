@@ -167,3 +167,120 @@ impl PendingImport {
         }
     }
 }
+
+// -----------------------------------------------------------
+/// AI 识别出的子任务意图枚举
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
+pub enum IntentType {
+    /// 原表局部清洗、修改、替换
+    #[serde(rename = "TYPE_UPDATE")]
+    #[default]
+    Update,
+
+    /// 统计汇总、透视、生成报表
+    #[serde(rename = "TYPE_REPORT")]
+    Report,
+
+    /// 多表联查、VLOOKUP、合并
+    #[serde(rename = "TYPE_JOIN")]
+    Join,
+
+    /// 无法识别或系统主动拒绝的高危操作
+    #[serde(rename = "TYPE_UNKNOWN")]
+    Unknown,
+}
+
+/// 编排器拆解出的单个独立子任务
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Task {
+    /// 步骤执行的序号
+    pub step: u32,
+    /// 该步骤的意图分类
+    pub intent: IntentType,
+    /// 该步骤的具体操作描述，将喂给 Coder 模型
+    pub description: String,
+}
+
+/// 接收 Orchestrator (编排器) 的强类型 JSON 响应
+#[derive(Debug, Deserialize)]
+pub struct OrchestratorResponse {
+    /// 拆解后的任务流水线数组
+    pub tasks: Vec<Task>,
+}
+
+impl IntentType {
+    /// 获取该意图对应的沙盒硬性约束指令
+    pub fn get_constraint(&self) -> &'static str {
+        match self {
+            IntentType::Update => {
+                "- [清洗修改约束]: 必须且只能调用 `safe_update_column(sheet_name, col_full_name, df_column)` 函数进行回写！严禁直接操作 wb.sheets 写入原表。"
+            }
+            IntentType::Report | IntentType::Join => {
+                "- [报表联查约束]: 原始数据绝对只读！必须将统计/联查结果赋值给新变量，并调用 `safe_create_report(report_name, final_df)` 生成新表。"
+            }
+            IntentType::Unknown => {
+                "- [高危操作拦截]: 如果任务中包含画图、修改颜色等不支持的操作，请使用 print() 输出告知用户当前 Agent 暂不支持该功能，并跳过此步骤。"
+            }
+        }
+    }
+}
+
+// ----------------------------------------------------------------
+/// 实体引用的层级，表示用户选中到了哪一步
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum EntityLevel {
+    /// 仅选中了文件 (例如：@报名表.xlsx)
+    File,
+    /// 选中了特定工作表 (例如：@报名表.xlsx -> Sheet1)
+    Sheet,
+    /// 精确选中了某表的某一列 (例如：@报名表.xlsx -> Sheet1 -> 基本信息@|||@姓名)
+    Column,
+}
+
+/// 核心数据结构：被用户 `@` 选中的具体实体
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct MentionEntity {
+    /// 文件的唯一标识或路径
+    pub file_path: String,
+    /// 工作表名称（如果选中了 Sheet 或 Column 则有值）
+    pub sheet_name: Option<String>,
+    /// 物理长列名（例如 "基本信息@|||@姓名"）
+    pub column_full_name: Option<String>,
+    /// 实体层级
+    pub level: EntityLevel,
+    /// UI 呈现用的短名字（例如 "姓名"），用于在输入框中渲染胶囊
+    pub display_name: String,
+}
+
+impl MentionEntity {
+    /// 将实体序列化为后端大模型可读的隐式标记语法
+    /// 格式示例: [[REF:D:\A.xlsx|Sheet1|基本信息@|||@姓名]]
+    pub fn to_ref_tag(&self) -> String {
+        let sheet = self.sheet_name.as_deref().unwrap_or("");
+        let col = self.column_full_name.as_deref().unwrap_or("");
+        format!("[[REF:{}|{}|{}]]", self.file_path, sheet, col)
+    }
+}
+
+/// 输入框内容片段 (富文本状态机)
+/// 将用户的输入打散为普通文本和强绑定的实体胶囊 TODO：迁移到其他文件
+#[derive(Debug, Clone, PartialEq)]
+pub enum InputToken {
+    /// 普通的自然语言文本
+    Text(String),
+    /// 用户通过 @ 选中的实体胶囊
+    Mention(MentionEntity),
+}
+
+impl InputToken {
+    /// 工具函数：将富文本片段合并为纯文本（用于发送给后端的 Payload）
+    pub fn stringify_for_backend(tokens: &[InputToken]) -> String {
+        tokens
+            .iter()
+            .map(|token| match token {
+                InputToken::Text(text) => text.clone(),
+                InputToken::Mention(entity) => entity.to_ref_tag(),
+            })
+            .collect::<String>()
+    }
+}
