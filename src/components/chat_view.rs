@@ -65,7 +65,7 @@ pub fn format_user_message(raw_msg: &str) -> String {
 // 🔥 新增：解析函数，将混合文本切分为 普通文本 和 代码块
 fn parse_markdown_segments(text: &str) -> Vec<TextSegment> {
     let mut segments = Vec::new();
-    let mut parts = text.split("```");
+    let parts = text.split("```");
 
     // 简单的偶数位置是文本，奇数位置是代码（假设代码块总是成对出现）
     // 这是一个简化的解析，更健壮的方式是使用 pulldown-cmark 库
@@ -111,26 +111,6 @@ fn render_markdown_inline(text: &str) -> Element {
                 })
         }
     }
-}
-
-fn clean_text(text: &str) -> String {
-    let mut result = String::new();
-    let mut in_code = false;
-    for line in text.lines() {
-        if line.trim().starts_with("```") {
-            in_code = !in_code;
-            continue;
-        }
-        if !in_code {
-            result.push_str(line);
-            result.push('\n');
-        }
-    }
-    result
-        .replace("下面是代码", "")
-        .replace("Here is the code", "")
-        .trim()
-        .to_string()
 }
 
 // 将复杂的文本段落渲染逻辑提取为独立函数

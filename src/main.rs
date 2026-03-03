@@ -370,7 +370,6 @@ fn App() -> Element {
                             active_files: state.active_files,
                             is_loading: state.is_loading,
                             config: state.config,
-                            error_fix_signal: state.error_fix_signal,
                             on_run_code: move |id| chat_controller::on_confirm(state, id),
                             on_open_file: move |_| file_controller::open_file_dialog(state, tx_files.clone()),
                         }

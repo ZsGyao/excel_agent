@@ -1,19 +1,20 @@
 use crate::{
     models::{AppConfig, IntentType, OrchestratorResponse},
-    services::excel_engine::{FileSchema, SHEET_JOIN_STR},
+    services::excel_engine::FileSchema,
 };
 use anyhow::Result;
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use reqwest::{self, Client};
 use serde::Deserialize;
 use serde_json::{self, json, Value};
-use std::{collections::HashMap, fs, path::PathBuf, sync::OnceLock};
+use std::{collections::HashMap, fs, path::PathBuf};
 use tracing::{debug, info}; // 确保 main.rs 中有 mod services;
 
 const ORCHESTRATOR_PROMPT: &str = include_str!("../../assets/prompts/orchestrator.md");
 const CODER_PROMPT: &str = include_str!("../../assets/prompts/coder.md");
 const UNIVERSAL_SANDBOX_TEMPLATE: &str =
     include_str!("../../assets/templates/universal_sandbox.py");
+const FIXER_PROMPT: &str = include_str!("../../assets/prompts/fixer.md");
 
 #[derive(Deserialize, Debug)]
 pub struct ChatPayload {
@@ -35,17 +36,23 @@ pub struct MentionData {
 /// * `raw_query` - 原始查询字符串
 /// * `schemas` - 全局文件 Schema 映射，用于校验引用是“具体列”还是“分类节点”
 pub fn parse_structured_query(json_payload: &str, schemas: &HashMap<String, FileSchema>) -> String {
-    // 假设 payload 已经解析完毕...
+    // 1. 尝试解析前端传来的纯 JSON
     let payload: ChatPayload = match serde_json::from_str(json_payload) {
         Ok(p) => p,
-        Err(_) => return json_payload.to_string(),
+        Err(_) => return json_payload.to_string(), // 普通文本直接放行
     };
 
-    let mut system_hints = String::from("【⚠️ 确定性操作指令】\n");
-    let mut final_query = payload.raw_query.clone();
+    if payload.mentions.is_empty() {
+        return payload.raw_query;
+    }
 
+    let mut system_hints = String::from(
+        "【⚠️ 确定性操作指令 - 优先级最高 ⚠️】\n用户已在 GUI 界面明确锁定了以下物理操作目标：\n",
+    );
+    let mut final_query = payload.raw_query;
+
+    // 2. 解密 Base64，组装底层物理路径指令
     for mention in payload.mentions {
-        // 🌟 核心：解码 Base64，此时反斜杠 \ 和换行 \r\n 完美重生！
         let file_path =
             String::from_utf8(B64.decode(&mention.file).unwrap_or_default()).unwrap_or_default();
         let sheet_name =
@@ -57,7 +64,7 @@ pub fn parse_structured_query(json_payload: &str, schemas: &HashMap<String, File
 
         if !col_path.is_empty() {
             let mut is_category = false;
-            // 🌟 此时 file_path 是精准无误的，必然能从 schemas 里取到对象
+            // 精准匹配表头 Schema，判断是否为合并单元格分类
             if let Some(file_schema) = schemas.get(&file_path) {
                 if let Some(sheet_schema) = file_schema.sheets.get(&sheet_name) {
                     let category_prefix = format!("{}@|||@", col_path);
@@ -69,6 +76,7 @@ pub fn parse_structured_query(json_payload: &str, schemas: &HashMap<String, File
             }
 
             if is_category {
+                // 🌟 重点：向 AI 注入物理层级的强制锁定
                 system_hints.push_str(&format!(
                     "- 🎯 批量锁定分类: 文件 `{}` -> 表 `{}` -> 分类前缀 `{}`\n",
                     file_path, sheet_name, col_path
@@ -79,7 +87,8 @@ pub fn parse_structured_query(json_payload: &str, schemas: &HashMap<String, File
                     "- 🎯 锁定物理列: 文件 `{}` -> 表 `{}` -> 绝对列名 `{}`\n",
                     file_path, sheet_name, col_path
                 ));
-                let short_col = col_path.split("@|||@").last().unwrap_or(col_path.as_str());
+                // 提取短列名让句子通顺，但绝不加 Emoji
+                let short_col = col_path.split("@|||@").last().unwrap_or(&col_path);
                 replacement_text = format!("`{}`表的`{}`列", sheet_name, short_col);
             }
         } else if !sheet_name.is_empty() {
@@ -90,12 +99,20 @@ pub fn parse_structured_query(json_payload: &str, schemas: &HashMap<String, File
             replacement_text = format!("`{}`工作表", sheet_name);
         } else {
             system_hints.push_str(&format!("- 🎯 锁定整个文件: `{}`\n", file_path));
-            replacement_text = format!("文件 `{}`", file_path);
+            let file_name = file_path
+                .replace("\\", "/")
+                .split('/')
+                .last()
+                .unwrap_or(&file_path)
+                .to_string();
+            replacement_text = format!("`{}`文件", file_name);
         }
 
+        // 把占位符替换成自然语言
         final_query = final_query.replace(&mention.placeholder, &replacement_text);
     }
 
+    // 3. 把强指令和最终需求拼装发送给 AI
     format!(
         "{}\n\n### 用户的最终需求如下：\n{}",
         system_hints, final_query
@@ -269,4 +286,66 @@ pub fn generate_dehydrated_schema_json(active_schemas: &HashMap<String, FileSche
     // 将组装好的 JSON 对象转换为漂亮的带缩进的字符串
     let final_json = Value::Object(context_map);
     serde_json::to_string_pretty(&final_json).unwrap_or_default()
+}
+
+pub async fn fix_code(
+    original_task: &str,
+    buggy_code: &str,
+    error_trace: &str,
+    api_key: &str,
+    model: &str,
+    base_url: &str,
+    schemas_json: &str,
+) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+
+    // 🌟 组装拥有全局视角的 Prompt
+    let system_prompt = FIXER_PROMPT
+        .replace("{{schemas_json}}", schemas_json)
+        .replace("{{original_task}}", original_task)
+        .replace("{{buggy_code}}", buggy_code)
+        .replace("{{error_trace}}", error_trace);
+
+    let user_prompt = "请一步步分析错误原因，并直接输出修复后的纯 Python 代码。";
+
+    let request_body = serde_json::json!({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "temperature": 0.1 // 修复代码需要极高准确率，调低温度
+    });
+
+    let res = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .json(&request_body)
+        .send()
+        .await
+        .map_err(|e| format!("网络请求失败: {}", e))?;
+
+    if !res.status().is_success() {
+        return Err(format!("API 返回错误状态码: {}", res.status()));
+    }
+
+    let json: serde_json::Value = res
+        .json()
+        .await
+        .map_err(|e| format!("解析 JSON 失败: {}", e))?;
+
+    let fixed_code = json["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+
+    // 清洗 Markdown 标记，确保提取出纯代码
+    let clean_code = fixed_code
+        .replace("```python", "")
+        .replace("```", "")
+        .trim()
+        .to_string();
+
+    Ok(clean_code)
 }

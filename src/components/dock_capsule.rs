@@ -7,7 +7,7 @@ use dioxus::{
         DesktopContext,
     },
     hooks::use_signal,
-    html::{HasFileData, InteractionLocation, MouseData},
+    html::{InteractionLocation, MouseData},
     prelude::*,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};

@@ -272,123 +272,6 @@ pub async fn run_python_code(code: &str) -> Result<String, String> {
     }
 }
 
-/// Excel 结构
-pub async fn peek_excel(file_path: &str) -> Result<String, String> {
-    let code = format!(
-        r#"
-import excel_core
-import json
-print(excel_core.peek(r"{}"))
-"#,
-        file_path
-    );
-    run_python_code(&code).await
-}
-
-/// 读取多文件上下文 (Multi-Sheet Context)
-///
-/// # 架构变更 (Multi-Sheet Upgrade)
-///
-/// * `pd.read_excel(path, sheet_name=None, nrows=3)` -> 读取所有表。
-///
-/// 这让 AI 拥有了"上帝视角"，能看到 Excel 里的所有工作表结构，
-/// 从而支持跨表查询、多表汇总等复杂操作。
-pub async fn get_multi_file_summary(file_paths: Vec<String>) -> String {
-    if file_paths.is_empty() {
-        return String::new();
-    }
-
-    let result = tokio::task::spawn_blocking(move || {
-        Python::with_gil(|py| -> String {
-            let paths_repr = format!("{:?}", file_paths);
-
-            // [MODIFIED] Python 脚本：遍历读取所有 Sheet
-            let code = format!(
-                r#"
-import pandas as pd
-import os
-
-file_paths = {}
-final_report = ""
-
-for path in file_paths:
-    if not os.path.exists(path):
-        continue
-    
-    filename = os.path.basename(path)
-    final_report += f"\n=== File: {{filename}} ===\nPath: {{path}}\n"
-    
-    try:
-        # [NEW] sheet_name=None 表示读取字典 {{sheet_name: df}}
-        # nrows=3 限制行数，避免 Token 爆炸，但足以展示结构
-        all_sheets = pd.read_excel(path, sheet_name=None, nrows=5) 
-        
-        if not all_sheets:
-            final_report += "(Empty Excel File)\n"
-            continue
-
-        for sheet_name, df in all_sheets.items():
-            final_report += f"\n[Sheet: {{sheet_name}}]\n"
-            
-            # 生成列名和类型摘要
-            col_info = []
-            for col in df.columns:
-                dtype = str(df[col].dtype)
-                col_info.append(f"{{col}}({{dtype}})")
-            info = "Columns: " + ", ".join(col_info) + "\n"
-            
-            # 生成数据预览 (Markdown 优先)
-            try:
-                info += df.to_markdown(index=False)
-            except ImportError:
-                info += df.to_string(index=False)
-            except Exception:
-                info += "[Preview generation failed]"
-                
-            final_report += info + "\n"
-            
-    except Exception as e:
-        final_report += f"Error reading file: {{e}}\n"
-        
-    final_report += "-"*30 + "\n"
-    
-print(final_report)
-"#,
-                paths_repr
-            );
-
-            // 标准的 Python 执行与 Stdout 捕获流程
-            let sys = match py.import("sys") {
-                Ok(v) => v,
-                Err(_) => return "Sys import failed".into(),
-            };
-            let io = match py.import("io") {
-                Ok(v) => v,
-                Err(_) => return "IO import failed".into(),
-            };
-            let stdout = match io.call_method0("StringIO") {
-                Ok(v) => v,
-                Err(_) => return "StringIO failed".into(),
-            };
-
-            if sys.setattr("stdout", stdout).is_err() {
-                return "Set stdout failed".into();
-            }
-            let _ = py.run(&code, None, None);
-
-            if let Ok(out) = stdout.call_method0("getvalue") {
-                if let Ok(s) = out.extract::<String>() {
-                    return s;
-                }
-            }
-            "Read Output failed".into()
-        })
-    })
-    .await;
-
-    result.unwrap_or_else(|_| "系统错误".to_string())
-}
-
 /// 批量创建热备份
 ///
 /// 使用 `shutil.copy2` 进行物理文件复制。
@@ -463,7 +346,7 @@ except:
 ///
 /// # 架构变更 (Safe Undo Upgrade)
 ///
-/// * **新逻辑**: **全量扫描 + 安全策略**。
+/// * **逻辑**: **全量扫描 + 安全策略**。
 ///     1.  遍历备份文件里的**所有** Sheet。
 ///     2.  如果目标里有同名 Sheet -> 覆盖恢复 (标记为**绿色**)。
 ///     3.  如果目标里没有 -> 新建并恢复 (标记为**绿色**)。
@@ -576,10 +459,4 @@ print("\n".join(log))
     );
 
     run_python_code(&code).await
-}
-
-/// 物理恢复函数（用于降级）
-pub fn restore_file_physical(original: &str, backup: &str) -> Result<(), std::io::Error> {
-    fs::copy(backup, original)?;
-    Ok(())
 }

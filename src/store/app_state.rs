@@ -18,7 +18,6 @@ pub struct AppState {
     pub config: Signal<AppConfig>,
     pub active_files: Signal<Vec<String>>,
     pub is_loading: Signal<bool>,
-    pub error_fix_signal: Signal<Option<String>>,
     pub retry_count: Signal<i32>,
     pub pending_import: Signal<Option<PendingImport>>,
     pub global_schemas: Signal<HashMap<String, FileSchema>>,
@@ -28,7 +27,7 @@ pub struct AppState {
 /// 在 App 根节点调用，初始化并注入全局状态
 pub fn use_init_app_state() -> AppState {
     // 先把依赖初始化的存起来
-    let mut global_schemas = use_signal(|| HashMap::<String, FileSchema>::new());
+    let global_schemas = use_signal(|| HashMap::<String, FileSchema>::new());
 
     let state = AppState {
         window_mode: use_signal(|| WindowMode::Widget),
@@ -37,7 +36,6 @@ pub fn use_init_app_state() -> AppState {
         config: use_signal(|| load_config()),
         active_files: use_signal(|| Vec::<String>::new()),
         is_loading: use_signal(|| false),
-        error_fix_signal: use_signal(|| None::<String>),
         retry_count: use_signal(|| 0),
         pending_import: use_signal(|| None::<PendingImport>),
         global_schemas,

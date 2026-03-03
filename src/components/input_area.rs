@@ -13,11 +13,10 @@ pub fn InputArea(
     active_files: Signal<Vec<String>>,
     is_loading: Signal<bool>,
     config: Signal<AppConfig>,
-    error_fix_signal: Signal<Option<String>>,
     on_run_code: EventHandler<usize>,
     on_open_file: EventHandler<()>,
 ) -> Element {
-    let mut state = use_app_state();
+    let state = use_app_state();
     let mut input_ref = use_signal(|| None::<std::rc::Rc<MountedData>>);
 
     let mut show_mention_menu = use_signal(|| false);
@@ -169,26 +168,6 @@ pub fn InputArea(
         // 这里的 call 会触发 chat_controller 里的逻辑
         on_run_code.call(ai_id);
         // 注意：is_loading 的关闭应该由具体执行代码的协程负责，这里先保持 true
-    };
-
-    use_effect(move || {
-        if let Some(err) = error_fix_signal() {
-            let err_clone = err.clone();
-            spawn(async move {
-                error_fix_signal.set(None);
-                perform_request(err_clone, true);
-            });
-        }
-    });
-
-    // 定义一个切换折叠的函数
-    let mut toggle_folder = move |path: String| {
-        let mut expanded = expanded_paths.write();
-        if expanded.contains(&path) {
-            expanded.remove(&path);
-        } else {
-            expanded.insert(path);
-        }
     };
 
     // 🌟 胶囊植入逻辑
@@ -359,7 +338,7 @@ pub fn InputArea(
     };
 
     // 原有模型切换逻辑
-    let mut switch_model = move |_| {
+    let switch_model = move |_| {
         let mut cfg = config.read().clone();
         if cfg.profiles.is_empty() {
             return;
@@ -382,7 +361,7 @@ pub fn InputArea(
 
     // 🌟 键盘劫持处理 (保持原样，修复了 set 调用)
     let current_list_for_kbd = current_list.clone();
-    let mut handle_keydown = move |evt: Event<KeyboardData>| {
+    let handle_keydown = move |evt: Event<KeyboardData>| {
         if *show_mention_menu.read() {
             match evt.key() {
                 Key::ArrowDown => {
@@ -473,7 +452,7 @@ pub fn InputArea(
         }
     };
 
-    let mut handle_keyup = move |evt: Event<KeyboardData>| {
+    let handle_keyup = move |evt: Event<KeyboardData>| {
         let key_str = evt.key().to_string();
         if key_str == "@" || key_str == "＠" {
             show_mention_menu.set(true);

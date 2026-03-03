@@ -1,6 +1,6 @@
 use dioxus::{desktop::use_window, html::HasFileData, prelude::*};
 
-use crate::models::{ActionStatus, ChatMessage, WindowMode};
+use crate::models::{ChatMessage, WindowMode};
 
 #[component]
 pub fn WidgetBall(
@@ -14,11 +14,6 @@ pub fn WidgetBall(
     // Drag window logical, move the float ball Widget
     let handle_drag_move = move |_| {
         window.drag();
-    };
-
-    // Click to switch Main
-    let handle_click = move |evt: Event<MouseData>| {
-        window_mode.set(WindowMode::Main);
     };
 
     rsx! {
