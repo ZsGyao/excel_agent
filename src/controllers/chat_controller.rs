@@ -135,8 +135,30 @@ pub fn on_confirm(mut state: AppState, msg_id: usize) {
                 match res {
                     Ok(out) => {
                         msg.status = ActionStatus::Success;
-                        msg.text.push_str(&format!("\n\n✨ 结果:\n{}", out));
-                        break; // ✅ 执行成功，跳出循环
+                        // 正则剥离结构化结果
+                        // (?s) 允许跨行匹配，(.*?) 非贪婪匹配取出中间的所有内容
+                        let re = regex::Regex::new(r"(?s)<REPORT>(.*?)</REPORT>").unwrap();
+                        let mut extracted_reports = Vec::new();
+
+                        for cap in re.captures_iter(&out) {
+                            let content = cap[1].trim();
+                            if !content.is_empty() {
+                                extracted_reports.push(content.to_string());
+                            }
+                        }
+
+                        // 如果 AI 按照规范输出了 REPORT 标签，就优雅地展示
+                        if !extracted_reports.is_empty() {
+                            let final_report = extracted_reports.join("\n\n---\n\n");
+                            msg.text
+                                .push_str(&format!("\n\n📊 **执行报告:**\n{}", final_report));
+                        } else {
+                            // 如果 AI 没有输出任何 REPORT（比如只是单纯的修改、清空数据操作）
+                            // 我们就不显示多余的文字，保持界面极简
+                            // (UI 上的 ✅ 操作已完成 Badge 已经足够说明一切了)
+                        }
+
+                        break; // 执行成功，跳出循环
                     }
                     Err(e) => {
                         msg.status = ActionStatus::Error(e.clone());
@@ -157,7 +179,7 @@ pub fn on_confirm(mut state: AppState, msg_id: usize) {
                         ));
                         msg.status = ActionStatus::Running;
 
-                        // ⚠️ 极其关键：必须在这里释放读写锁，否则下面的 await 请求会导致死锁！
+                        // 必须在这里释放读写锁，否则下面的 await 请求会导致死锁！
                         drop(msgs);
 
                         // 🌟 呼叫 Fixer AI 进行抢救

@@ -1457,3 +1457,302 @@ pre code.hljs {
     color: #1e40af;
     border-color: #bfdbfe;
 }
+
+/* =========================================
+   高级 Chat UI 样式重构
+   ========================================= */
+.chat-scroll {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    padding: 20px;
+}
+
+.chat-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    max-width: 100%;
+}
+
+.row-user {
+    justify-content: flex-end;
+}
+
+.row-ai {
+    justify-content: flex-start;
+}
+
+/* 头像设计 */
+.avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+    background: #f1f5f9;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+}
+
+.user-avatar {
+    background: #dbeafe;
+}
+
+/* 气泡设计 */
+.chat-bubble {
+    max-width: 85%;
+    padding: 12px 16px;
+    border-radius: 18px;
+    font-size: 14px;
+    line-height: 1.6;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    /* 允许复制 */
+    user-select: text;
+    -webkit-user-select: text;
+    cursor: text;
+}
+
+.bubble-user {
+    background: #2563eb;
+    color: white;
+    border-bottom-right-radius: 4px;
+}
+
+.bubble-ai {
+    background: #ffffff;
+    color: #1e293b;
+    border-bottom-left-radius: 4px;
+    border: 1px solid #e2e8f0;
+}
+
+/* 内容褪色效果（撤销时） */
+.content-undone {
+    text-decoration: line-through;
+    opacity: 0.5;
+}
+
+/* AI 底部状态栏 */
+.bubble-footer {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #f1f5f9;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* 状态徽章 Badge */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+    width: fit-content;
+}
+
+.status-badge.running {
+    background: #fef08a;
+    color: #92400e;
+}
+
+.status-badge.success {
+    background: #dcfce3;
+    color: #166534;
+}
+
+.status-badge.undone {
+    background: #f1f5f9;
+    color: #64748b;
+}
+
+.status-badge.error {
+    background: #fee2e2;
+    color: #991b1b;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.error-detail {
+    font-family: monospace;
+    font-size: 11px;
+    background: rgba(255, 255, 255, 0.5);
+    padding: 4px 8px;
+    border-radius: 4px;
+    margin-top: 4px;
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+/* 带有撤销按钮的同行布局 */
+.status-action-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+/* 精致的操作按钮 */
+.action-btn {
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+}
+
+.run-btn {
+    background: #2563eb;
+    color: white;
+}
+
+.run-btn:hover {
+    background: #1d4ed8;
+}
+
+.cancel-btn {
+    background: #f1f5f9;
+    color: #475569;
+}
+
+.cancel-btn:hover {
+    background: #e2e8f0;
+}
+
+.undo-btn {
+    background: white;
+    color: #475569;
+    border: 1px solid #e2e8f0;
+}
+
+.undo-btn:hover {
+    background: #f8fafc;
+    color: #ef4444;
+    border-color: #fca5a5;
+}
+
+/* 优雅的代码折叠器 */
+.sleek-details {
+    font-size: 12px;
+    color: #64748b;
+}
+
+.sleek-details summary {
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    font-weight: 500;
+}
+
+.sleek-details summary:hover {
+    color: #2563eb;
+}
+
+.details-content {
+    margin-top: 8px;
+}
+
+/* Loading 旋转动画 */
+.spinner {
+    width: 12px;
+    height: 12px;
+    border: 2px solid #d97706;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* 确认执行面板 */
+.confirm-panel {
+    background: #f8fafc;
+    border: 1px dashed #cbd5e1;
+    padding: 12px;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.confirm-actions {
+    display: flex;
+    gap: 8px;
+}
+
+/* =========================================
+   Markdown 结构化数据表格美化 (Report Table)
+   ========================================= */
+.bubble-content table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0;
+    font-size: 13px;
+    background-color: #ffffff;
+    border-radius: 8px;
+    overflow: hidden;
+    /* 让圆角生效 */
+    box-shadow: 0 0 0 1px #e2e8f0;
+    /* 用 shadow 代替 border，更高级 */
+}
+
+.bubble-content th,
+.bubble-content td {
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.bubble-content th {
+    background-color: #f8fafc;
+    font-weight: 600;
+    color: #475569;
+    white-space: nowrap;
+    /* 表头不换行 */
+}
+
+/* 隔行变色 (斑马纹)，提高长表格可读性 */
+.bubble-content tbody tr:nth-child(even) {
+    background-color: #fbfcfd;
+}
+
+.bubble-content tbody tr:hover {
+    background-color: #f1f5f9;
+}
+
+/* 适配如果是用户气泡里发出了表格（虽然少见，但也做一下深色适配） */
+.bubble-user table {
+    background-color: rgba(255, 255, 255, 0.1);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2);
+    color: white;
+}
+
+.bubble-user th {
+    background-color: rgba(0, 0, 0, 0.2);
+    color: white;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.bubble-user td {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.bubble-user tbody tr:nth-child(even) {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.bubble-user tbody tr:hover {
+    background-color: rgba(255, 255, 255, 0.15);
+}

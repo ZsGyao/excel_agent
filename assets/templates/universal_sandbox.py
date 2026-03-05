@@ -61,6 +61,38 @@ def clean_semantic_name(name):
         return name.split("@|||@")[-1]
     return name
 
+def show_report(content):
+    """
+    🌟 核心输出 API：专门用于向用户展示结构化报告
+    它会自动净化 DataFrame 的表头，去掉无用的数字索引，并严格包裹在 REPORT 标签中。
+    """
+    print("<REPORT>")
+    if isinstance(content, (pd.DataFrame, pd.Series)):
+        df_copy = content.copy()
+        
+        if isinstance(df_copy, pd.DataFrame):
+            df_copy.rename(columns=clean_semantic_name, inplace=True)
+        elif isinstance(df_copy, pd.Series) and df_copy.name:
+            df_copy.name = clean_semantic_name(df_copy.name)
+            
+        if df_copy.index.name:
+            df_copy.index.name = clean_semantic_name(df_copy.index.name)
+        if isinstance(df_copy.index, pd.MultiIndex):
+            df_copy.index.names = [clean_semantic_name(n) for n in df_copy.index.names]
+            
+        try:
+            # 尝试生成 Markdown，强行加换行符
+            if isinstance(df_copy, pd.DataFrame) and isinstance(df_copy.index, pd.RangeIndex):
+                print(f"\n\n{df_copy.to_markdown(index=False)}\n\n")
+            else:
+                print(f"\n\n{df_copy.to_markdown()}\n\n")
+        except ImportError:
+            # 如果没有安装 tabulate，安全降级为普通文本，也强行加换行符
+            print(f"\n\n{df_copy.to_string()}\n\n")
+    else:
+        print(f"\n\n{str(content)}\n\n")
+    print("</REPORT>")
+
 def safe_create_report(report_name, final_df):
     try:
         new_sheet = wb.sheets.add(report_name)
@@ -68,7 +100,7 @@ def safe_create_report(report_name, final_df):
         new_sheet = wb.sheets[report_name]
         new_sheet.clear()
         
-    # 🌟 核心修复：在写入前，自动净化 DataFrame / Series 中的所有表头和索引
+    # 在写入前，自动净化 DataFrame / Series 中的所有表头和索引
     if isinstance(final_df, (pd.DataFrame, pd.Series)):
         final_df = final_df.copy() # 防止 SettingWithCopyWarning
         
