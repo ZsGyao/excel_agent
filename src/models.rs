@@ -18,7 +18,7 @@ pub enum ActionStatus {
     None,
     /// 等待 AI 响应中
     Loading,
-    /// 🔥 关键状态：AI 生成了代码，等待用户点击“执行”
+    /// AI 生成了代码，等待用户点击“执行”
     WaitingConfirmation,
     /// Python 代码正在后台执行
     Running,

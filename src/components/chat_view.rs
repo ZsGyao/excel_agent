@@ -62,7 +62,7 @@ pub fn format_user_message(raw_msg: &str) -> String {
     raw_msg.to_string()
 }
 
-// 🔥 新增：解析函数，将混合文本切分为 普通文本 和 代码块
+// 解析函数，将混合文本切分为 普通文本 和 代码块
 fn parse_markdown_segments(text: &str) -> Vec<TextSegment> {
     let mut segments = Vec::new();
     let parts = text.split("```");
@@ -89,8 +89,8 @@ fn parse_markdown_segments(text: &str) -> Vec<TextSegment> {
     segments
 }
 
-// 🔥 新增：辅助函数，简单处理行内的 **加粗** 语法
-// 这样 "🚨 **检测到...**" 里的文字就会变成 <strong />，配合 CSS 变深红色
+// 辅助函数，简单处理行内的 **加粗** 语法
+// 这样 "**检测到...**" 里的文字就会变成 <strong />，配合 CSS 变深红色
 fn render_markdown_inline(text: &str) -> Element {
     let parts: Vec<&str> = text.split("**").collect();
     rsx! {

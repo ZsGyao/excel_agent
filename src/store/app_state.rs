@@ -9,19 +9,19 @@ use crate::services::ai::generate_dehydrated_schema_json;
 use crate::services::config::load_config;
 use crate::services::excel_engine::FileSchema;
 
-/// 整个 App 的唯一真理之源 (Single Source of Truth)
+/// App Single Source
 #[derive(Clone, Copy)]
 pub struct AppState {
-    pub window_mode: Signal<WindowMode>,
-    pub last_widget_pos: Signal<Option<PhysicalPosition<i32>>>,
-    pub messages: Signal<Vec<ChatMessage>>,
-    pub config: Signal<AppConfig>,
-    pub active_files: Signal<Vec<String>>,
-    pub is_loading: Signal<bool>,
-    pub retry_count: Signal<i32>,
-    pub pending_import: Signal<Option<PendingImport>>,
-    pub global_schemas: Signal<HashMap<String, FileSchema>>,
-    pub ai_context_json: Memo<String>,
+    pub window_mode: Signal<WindowMode>, // 当前窗口模式
+    pub last_widget_pos: Signal<Option<PhysicalPosition<i32>>>, // 上次窗口位置
+    pub messages: Signal<Vec<ChatMessage>>, // 用户发送消息列表
+    pub config: Signal<AppConfig>,       // 当前API配置
+    pub active_files: Signal<Vec<String>>, // 当前打开的文件列表
+    pub is_loading: Signal<bool>,        // 是否正在AI response加载
+    pub retry_count: Signal<i32>,        // 错误重试次数
+    pub pending_import: Signal<Option<PendingImport>>, // 等待用户选择导入表的表头
+    pub global_schemas: Signal<HashMap<String, FileSchema>>, // 全局文件 Schema 映射
+    pub ai_context_json: Memo<String>,   // AI 上下文 JSON
 }
 
 /// 在 App 根节点调用，初始化并注入全局状态
@@ -39,7 +39,7 @@ pub fn use_init_app_state() -> AppState {
         retry_count: use_signal(|| 0),
         pending_import: use_signal(|| None::<PendingImport>),
         global_schemas,
-        // Memo 依赖 global_schemas
+        // Memo 依赖 global_schemas,ai_context_json追踪 global_schemas 的变化，使用use_memo()
         ai_context_json: use_memo(move || {
             let json_str = generate_dehydrated_schema_json(&global_schemas.read());
             if json_str.len() > 2 {
